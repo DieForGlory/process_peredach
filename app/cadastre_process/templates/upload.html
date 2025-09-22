@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header">
+        Загрузка данных по кадастру
+    </div>
+    <div class.card-body">
+        <div class="mb-3">
+            <label for="complex-select" class="form-label fw-bold">1. Выберите ЖК</label>
+            <select class="form-select" id="complex-select" name="complex_name" required>
+                <option value="" selected disabled>-- Сначала выберите ЖК --</option>
+                {% for complex in houses_data.keys()|sort %}
+                    <option value="{{ complex }}">{{ complex }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="mb-4">
+            <label for="house-select" class="form-label fw-bold">2. Выберите дом</label>
+            <select class="form-select" id="house-select" name="house_id" required disabled>
+                <option value="" selected disabled>-- Сначала выберите ЖК --</option>
+            </select>
+        </div>
+
+        <div id="upload-block" class="d-none">
+            <hr>
+            <div class="mb-3">
+                <label class="form-label fw-bold">3. Скачайте и заполните шаблон</label>
+                <p>Нажмите на кнопку, чтобы скачать Excel-файл со списком квартир. Внесите в него данные о кадастровой площади.</p>
+                <a id="download-btn" class="btn btn-success" href="#" role="button">
+                    Скачать шаблон для выбранного дома
+                </a>
+            </div>
+
+            <form method="post" enctype="multipart/form-data" action="{{ url_for('cadastre_process.process_upload') }}">
+                <input type="hidden" id="form-house-id" name="house_id">
+
+                <div class="mb-3">
+                    <label for="cadastre_file" class="form-label fw-bold">4. Загрузите заполненный шаблон</label>
+                    <input class="form-control" type="file" id="cadastre_file" name="cadastre_file" accept=".xls,.xlsx" required>
+                </div>
+                <button type="submit" class="btn btn-primary">Начать обработку</button>
+            </form>
+        </div>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+          {% if messages %}
+            <div class="mt-3">
+              {% for category, message in messages %}
+                <div class="alert alert-{{ category }}">{{ message }}</div>
+              {% endfor %}
+            </div>
+          {% endif %}
+        {% endwith %}
+    </div>
+</div>
+
+<script>
+    const housesData = {{ houses_data | tojson }};
+    const complexSelect = document.getElementById('complex-select');
+    const houseSelect = document.getElementById('house-select');
+    const downloadBtn = document.getElementById('download-btn');
+    const uploadBlock = document.getElementById('upload-block');
+    const formHouseIdInput = document.getElementById('form-house-id');
+
+    complexSelect.addEventListener('change', function() {
+        const selectedComplex = this.value;
+        houseSelect.innerHTML = '<option value="" selected disabled>-- Выберите дом --</option>';
+        houseSelect.disabled = true;
+        uploadBlock.classList.add('d-none'); // Скрываем блок загрузки
+
+        if (selectedComplex && housesData[selectedComplex]) {
+            houseSelect.disabled = false;
+            housesData[selectedComplex].forEach(function(house) {
+                const option = new Option(house.name, house.id);
+                houseSelect.add(option);
+            });
+        }
+    });
+
+    houseSelect.addEventListener('change', function() {
+        const selectedHouseId = this.value;
+        if (selectedHouseId) {
+            // Устанавливаем ссылку для скачивания
+            downloadBtn.href = `/download-template/${selectedHouseId}`;
+            // Копируем ID дома в скрытое поле формы
+            formHouseIdInput.value = selectedHouseId;
+            // Показываем блок скачивания и загрузки
+            uploadBlock.classList.remove('d-none');
+        } else {
+            uploadBlock.classList.add('d-none');
+        }
+    });
+</script>
+{% endblock %}

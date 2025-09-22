@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h2>Список обработанных сделок</h2>
+    <a href="{{ url_for('cadastre_process.upload_page') }}" class="btn btn-secondary">Вернуться к загрузке</a>
+</div>
+
+<!-- Фильтры -->
+<div class="card mb-4">
+    <div class="card-header fw-bold">Фильтр по группам</div>
+    <div class="card-body">
+        <form method="get" action="{{ url_for('cadastre_process.deals_list') }}">
+            <div class="row g-3 align-items-end">
+                <div class="col-md-8">
+                    <label for="group-select" class="form-label">Группа</label>
+                    <select class="form-select" id="group-select" name="group_key">
+                        <option value="">Все группы</option>
+                        {% for key, name in group_names.items() %}
+                            <option value="{{ key }}" {% if active_group_filter == key %}selected{% endif %}>{{ name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-4">
+                    <button type="submit" class="btn btn-primary me-2">Применить</button>
+                    <a href="{{ url_for('cadastre_process.deals_list') }}" class="btn btn-outline-secondary">Сбросить</a>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Таблица -->
+<div class="card">
+    <div class="card-body table-responsive">
+        <table class="table table-striped table-hover mb-0 align-middle">
+            <thead>
+                <tr>
+                    <th>Кв. №</th>
+                    <th>ФИО клиента</th>
+                    <th>Группа</th>
+                    <th style="width: 40%;">Статус / Действие</th>
+                    <th class="timer-col text-center" id="timer-header" title="Скрыть/показать столбец">Таймер ⏱️</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for deal in deals %}
+                {% set status = deal.status_obj %}
+                <tr id="deal-row-{{ deal.deal_id }}">
+                    <td>{{ deal.property_id }}</td>
+                    <td>{{ deal.client_name or 'N/A' }}</td>
+                    <td><span class="badge bg-info text-dark">{{ group_names[deal.group_key] }}</span></td>
+                    <td>
+                        {% if status %}
+                             {% if status.group_key == '1_no_issues' %}
+                                {% if status.status == 'completed' %}
+                                    <span class="badge bg-success">Процесс завершен</span>
+                                {% elif status.status == 'acceptance_pending' %}
+                                    <span class="badge bg-primary">Ожидание приемки</span>
+                                    <button class="btn btn-sm btn-primary open-acceptance-modal ms-2"
+                                            data-bs-toggle="modal"
+                                            data-bs-target="#acceptanceModal"
+                                            data-deal-id="{{ deal.deal_id }}">
+                                        Внести результат приемки
+                                    </button>
+                                {% elif deal.is_timed_out and not status.client_arrived_at %}
+                                    <div class="p-2 border rounded bg-light"><!-- ... форма одностороннего акта ... --></div>
+                                {% elif status.documents_delivered_at %}
+                                    <div class="form-check form-switch">
+                                        <input class="form-check-input client-arrived-checkbox" type="checkbox" data-deal-id="{{ deal.deal_id }}">
+                                        <label>Клиент пришел в офис</label>
+                                    </div>
+                                {% else %}
+                                    <div class="form-check form-switch">
+                                        <input class="form-check-input delivery-checkbox" type="checkbox" data-deal-id="{{ deal.deal_id }}">
+                                        <label>Документы доставлены</label>
+                                    </div>
+                                {% endif %}
+                            {% else %}
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input delivery-checkbox" type="checkbox" data-deal-id="{{ deal.deal_id }}" {% if status.documents_delivered_at %}checked disabled{% endif %}>
+                                    <label>Документы доставлены</label>
+                                </div>
+                            {% endif %}
+                        {% else %}
+                            <span class="text-muted">Ожидание обработки...</span>
+                        {% endif %}
+                    </td>
+                    <td class="text-center timer-cell">
+                        {% if status and status.group_key == '1_no_issues' and status.status == 'pending_arrival' and not deal.is_timed_out and deal.deadline_iso %}
+                            <span class="countdown-timer fw-bold" data-deadline="{{ deal.deadline_iso }}">...</span>
+                        {% else %}
+                            <span class="text-muted">--</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% else %}
+                <tr><td colspan="5" class="text-center text-muted py-5">Сделки не найдены.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Пагинация -->
+{% if total_pages > 1 %}
+<nav class="mt-4"><ul class="pagination justify-content-center">
+    <li class="page-item {% if current_page == 1 %}disabled{% endif %}"><a class="page-link" href="{{ url_for('cadastre_process.deals_list', page=current_page - 1, group_key=active_group_filter) }}">&laquo;</a></li>
+    {% for page_num in range(1, total_pages + 1) %}
+        <li class="page-item {% if page_num == current_page %}active{% endif %}"><a class="page-link" href="{{ url_for('cadastre_process.deals_list', page=page_num, group_key=active_group_filter) }}">{{ page_num }}</a></li>
+    {% endfor %}
+    <li class="page-item {% if current_page == total_pages %}disabled{% endif %}"><a class="page-link" href="{{ url_for('cadastre_process.deals_list', page=current_page + 1, group_key=active_group_filter) }}">&raquo;</a></li>
+</ul></nav>
+{% endif %}
+
+<!-- Модальное окно (остается без изменений) -->
+<div class="modal fade" id="acceptanceModal" tabindex="-1">
+    {# ... #}
+</div>
+
+<!-- JavaScript -->
+<script src="{{ url_for('static', filename='js/deals_list.js') }}"></script>
+{% endblock %}
