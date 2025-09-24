@@ -233,17 +233,10 @@ def download_acceptance_act(deal_id):
     )
 
 
-@cadastre_bp.route('/report-acceptance-result/<int:deal_id>', methods=['POST'])
-def report_acceptance_result(deal_id):
-    is_signed = request.json.get('is_signed')
-    success = update_deal_status(deal_id, 'report_act_signed', data=is_signed)
-    return jsonify({'status': 'success' if success else 'error'}), 200 if success else 500
-
-
-@cadastre_bp.route('/report-defect-result/<int:deal_id>', methods=['POST'])
-def report_defect_result(deal_id):
-    has_defects = request.json.get('has_defects')
-    success = update_deal_status(deal_id, 'report_defects', data=has_defects)
+@cadastre_bp.route('/process-acceptance/<int:deal_id>', methods=['POST'])
+def process_acceptance(deal_id):
+    data = request.json
+    success = update_deal_status(deal_id, 'process_acceptance', data=data)
     return jsonify({'status': 'success' if success else 'error'}), 200 if success else 500
 
 

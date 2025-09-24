@@ -1,4 +1,4 @@
-// /app/cadastre_process/static/js/deals_list.js
+// /app/static/js/deals_list.js
 
 document.addEventListener('DOMContentLoaded', function() {
 
@@ -20,7 +20,6 @@ document.addEventListener('DOMContentLoaded', function() {
         })
         .then(data => {
             if (data.status === 'success') {
-                // Перезагружаем страницу, чтобы сервер отрисовал новое состояние
                 window.location.reload();
             } else {
                 alert('Произошла ошибка при сохранении. Попробуйте снова.');
@@ -54,18 +53,29 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 
     // -------------------------------------------------------------------
+    // ЛОГИКА ДЛЯ КНОПКИ СКАЧИВАНИЯ АКТА
+    // -------------------------------------------------------------------
+    document.querySelectorAll('.download-acceptance-act-btn').forEach(button => {
+        button.addEventListener('click', function(event) {
+            event.preventDefault();
+            const downloadUrl = this.dataset.url;
+            this.disabled = true;
+            this.textContent = 'Загрузка...';
+            window.location.href = downloadUrl;
+            setTimeout(() => window.location.reload(), 2000);
+        });
+    });
+
+    // -------------------------------------------------------------------
     // ЛОГИКА ДЛЯ ТАЙМЕРА И СКРЫТИЯ КОЛОНКИ
     // -------------------------------------------------------------------
     const timerHeader = document.getElementById('timer-header');
-
     function updateTimers() {
         document.querySelectorAll('.countdown-timer').forEach(span => {
             const deadline = new Date(span.dataset.deadline);
-            if (isNaN(deadline)) return; // Пропускаем, если дата невалидна
-
+            if (isNaN(deadline)) return;
             const now = new Date();
             const diff = deadline - now;
-
             if (diff < 0) {
                 span.textContent = "Время вышло";
                 span.classList.add('text-danger');
@@ -79,43 +89,82 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
-    function toggleTimerColumn() {
-        const isHidden = timerHeader.classList.toggle('hidden');
-        document.querySelectorAll('.timer-cell').forEach(cell => {
-            cell.classList.toggle('hidden', isHidden);
-        });
-        localStorage.setItem('timerColumnHidden', isHidden);
-    }
-
     if (timerHeader) {
-        timerHeader.addEventListener('click', toggleTimerColumn);
-
-        if (localStorage.getItem('timerColumnHidden') === 'true') {
-            toggleTimerColumn();
-        }
-
         if (document.querySelector('.countdown-timer')) {
             updateTimers();
             setInterval(updateTimers, 1000);
         }
     }
-});
-document.querySelectorAll('.download-acceptance-act-btn').forEach(button => {
-    button.addEventListener('click', function(event) {
-        event.preventDefault(); // Предотвращаем стандартное действие
-        const downloadUrl = this.dataset.url;
 
-        // Меняем текст и блокируем кнопку, чтобы показать, что что-то происходит
-        this.disabled = true;
-        this.textContent = 'Загрузка...';
+    // -------------------------------------------------------------------
+    // ЛОГИКА ДЛЯ МОДАЛЬНОГО ОКНА ПРИЕМКИ
+    // -------------------------------------------------------------------
+    const acceptanceModal = document.getElementById('acceptanceModal');
+    if (acceptanceModal) {
+        const modalDealIdInput = document.getElementById('modal-deal-id');
+        const form = document.getElementById('acceptance-form');
 
-        // Запускаем скачивание файла
-        window.location.href = downloadUrl;
+        document.querySelectorAll('.open-acceptance-modal').forEach(button => {
+            button.addEventListener('click', function() {
+                modalDealIdInput.value = this.dataset.dealId;
+                form.reset();
+            });
+        });
 
-        // Добавляем небольшую задержку (чтобы дать файлу начать скачиваться)
-        // и затем принудительно перезагружаем страницу.
-        setTimeout(function() {
-            window.location.reload();
-        }, 2000); // 2 секунды
-    });
+        document.getElementById('save-acceptance-results').addEventListener('click', async function() {
+            const dealId = modalDealIdInput.value;
+            const isSigned = form.elements['is_signed'].value;
+            const hasDefects = form.elements['has_defects'].value;
+
+            if (!isSigned || !hasDefects) {
+                alert('Пожалуйста, ответьте на все вопросы.');
+                return;
+            }
+
+            this.disabled = true;
+            this.textContent = 'Сохранение...';
+
+            try {
+                // 1. Отправляем информацию о подписи и дефектах
+                await fetch(`/process-acceptance/${dealId}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        is_signed: (isSigned === 'true'),
+                        has_defects: (hasDefects === 'true')
+                    })
+                });
+
+                // 2. Загружаем файлы (если они есть)
+                const filesData = new FormData();
+                const signedActFile = document.getElementById('signed_act').files[0];
+                const defectListFile = document.getElementById('defect_list').files[0];
+                let filesAttached = false;
+
+                if (signedActFile) {
+                    filesData.append('signed_act', signedActFile);
+                    filesAttached = true;
+                }
+                if (defectListFile) {
+                    filesData.append('defect_list', defectListFile);
+                    filesAttached = true;
+                }
+
+                if (filesAttached) {
+                    await fetch(`/upload-final-docs/${dealId}`, {
+                        method: 'POST',
+                        body: filesData
+                    });
+                }
+
+                window.location.reload();
+
+            } catch (error) {
+                console.error('Error saving acceptance results:', error);
+                alert('Произошла ошибка при сохранении данных.');
+                this.disabled = false;
+                this.textContent = 'Сохранить';
+            }
+        });
+    }
 });

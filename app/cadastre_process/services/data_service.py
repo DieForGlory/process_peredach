@@ -12,7 +12,8 @@ def get_complexes_and_houses():
     db_session = MysqlSession()
     houses_data = defaultdict(list)
     try:
-        query = text("SELECT id, complex_name, name FROM estate_houses WHERE complex_name IS NOT NULL AND name IS NOT NULL ORDER BY complex_name, name;")
+        query = text(
+            "SELECT id, complex_name, name FROM estate_houses WHERE complex_name IS NOT NULL AND name IS NOT NULL ORDER BY complex_name, name;")
         result = db_session.execute(query).fetchall()
         for row in result:
             houses_data[row.complex_name].append({'id': row.id, 'name': row.name})
@@ -163,26 +164,30 @@ def update_deal_status(deal_id: int, action: str, data=None):
             status.status = 'pending_arrival'
         elif action == 'mark_arrived':
             status.client_arrived_at = datetime.utcnow()
-            status.status = 'acceptance_pending'  # <-- Новый статус
+            status.status = 'acceptance_pending'
 
-        # --- НОВЫЕ ДЕЙСТВИЯ ---
+        # --- ОБНОВЛЕННЫЕ ДЕЙСТВИЯ ---
         elif action == 'acceptance_act_downloaded':
             status.acceptance_act_downloaded_at = datetime.utcnow()
-        elif action == 'report_act_signed':
-            status.is_act_signed = data  # data будет True/False
-        elif action == 'report_defects':
-            status.has_defect_list = data  # data будет True/False
+
+        elif action == 'process_acceptance':
+            is_signed = data.get('is_signed')
+            has_defects = data.get('has_defects')
+            status.is_act_signed = is_signed
+            status.has_defect_list = has_defects
+            if is_signed is False and has_defects is False:
+                status.status = 'unilateral_pending'
+
         elif action == 'upload_signed_act':
-            status.signed_act_uploaded_path = data  # data будет путем к файлу
-            if not status.has_defect_list:  # Если нет дефектного листа, то это конец
+            status.signed_act_uploaded_path = data
+            if not status.has_defect_list:
                 status.status = 'completed'
         elif action == 'upload_defect_list':
-            status.defect_list_uploaded_path = data  # data будет путем к файлу
-            if status.signed_act_uploaded_path:  # Если акт уже загружен, то это конец
+            status.defect_list_uploaded_path = data
+            if status.signed_act_uploaded_path:
                 status.status = 'completed'
-        # --------------------
 
-        elif action == 'act_downloaded':  # Для одностороннего акта
+        elif action == 'act_downloaded':
             status.unilateral_act_downloaded_at = datetime.utcnow()
         elif action == 'act_uploaded':
             status.unilateral_act_uploaded_path = data
@@ -202,10 +207,6 @@ def get_statuses_for_deals(deal_ids: list):
     """
     if not deal_ids:
         return {}
-
-    # Убедимся, что модель импортирована
     from ..models import DealStatus
-
     statuses = DealStatus.query.filter(DealStatus.deal_id.in_(deal_ids)).all()
-    # Возвращаем словарь для быстрого доступа: {deal_id: status_object}
     return {s.deal_id: s for s in statuses}

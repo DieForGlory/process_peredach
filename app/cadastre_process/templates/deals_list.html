@@ -5,7 +5,6 @@
     <a href="{{ url_for('cadastre_process.upload_page') }}" class="btn btn-secondary">Вернуться к загрузке</a>
 </div>
 
-<!-- Фильтры -->
 <div class="card mb-4">
     <div class="card-header fw-bold">Фильтр по группам</div>
     <div class="card-body">
@@ -29,7 +28,6 @@
     </div>
 </div>
 
-<!-- Таблица -->
 <div class="card">
     <div class="card-body table-responsive">
         <table class="table table-striped table-hover mb-0 align-middle">
@@ -54,26 +52,53 @@
                              {% if status.group_key == '1_no_issues' %}
                                 {% if status.status == 'completed' %}
                                     <span class="badge bg-success">Процесс завершен</span>
-                                {% elif status.status == 'acceptance_pending' %}
-                                    <span class="badge bg-primary">Ожидание приемки</span>
-                                    <button class="btn btn-sm btn-primary open-acceptance-modal ms-2"
-                                            data-bs-toggle="modal"
-                                            data-bs-target="#acceptanceModal"
-                                            data-deal-id="{{ deal.deal_id }}">
-                                        Внести результат приемки
-                                    </button>
-                                {% elif deal.is_timed_out and not status.client_arrived_at %}
-                                    <div class="p-2 border rounded bg-light"><!-- ... форма одностороннего акта ... --></div>
-                                {% elif status.documents_delivered_at %}
-                                    <div class="form-check form-switch">
-                                        <input class="form-check-input client-arrived-checkbox" type="checkbox" data-deal-id="{{ deal.deal_id }}">
-                                        <label>Клиент пришел в офис</label>
-                                    </div>
-                                {% else %}
+
+                                {% elif status.status == 'processing' %}
                                     <div class="form-check form-switch">
                                         <input class="form-check-input delivery-checkbox" type="checkbox" data-deal-id="{{ deal.deal_id }}">
                                         <label>Документы доставлены</label>
                                     </div>
+
+                                {% elif status.status == 'pending_arrival' %}
+                                    {% if deal.is_timed_out %}
+                                        <div class="p-2 border rounded bg-light">
+                                             <p class="mb-1">Клиент не явился в 30-дневный срок.</p>
+                                             <a href="{{ url_for('cadastre_process.download_unilateral_act', deal_id=deal.deal_id) }}" class="btn btn-sm btn-warning">Скачать односторонний акт</a>
+                                        </div>
+                                    {% else %}
+                                        <div class="form-check form-switch">
+                                            <input class="form-check-input client-arrived-checkbox" type="checkbox" data-deal-id="{{ deal.deal_id }}">
+                                            <label>Клиент пришел в офис</label>
+                                        </div>
+                                    {% endif %}
+
+                                {% elif status.status == 'acceptance_pending' %}
+                                    {% if status.acceptance_act_downloaded_at is none %}
+                                        <a href="{{ url_for('cadastre_process.download_acceptance_act', deal_id=deal.deal_id) }}" class="btn btn-sm btn-info download-acceptance-act-btn" data-url="{{ url_for('cadastre_process.download_acceptance_act', deal_id=deal.deal_id) }}">
+                                            Скачать акт приема-передачи
+                                        </a>
+                                    {% else %}
+                                        <button class="btn btn-sm btn-primary open-acceptance-modal"
+                                                data-bs-toggle="modal"
+                                                data-bs-target="#acceptanceModal"
+                                                data-deal-id="{{ deal.deal_id }}">
+                                            Внести результат приемки
+                                        </button>
+                                    {% endif %}
+
+                                {% elif status.status == 'unilateral_pending' %}
+                                    {% if status.unilateral_act_downloaded_at is none %}
+                                        <div class="p-2 border rounded bg-light-warning">
+                                            <p class="mb-1 small">Клиент отказался подписывать акт и не имеет претензий.</p>
+                                            <a href="{{ url_for('cadastre_process.download_unilateral_act', deal_id=deal.deal_id) }}" class="btn btn-sm btn-warning">Скачать односторонний акт</a>
+                                        </div>
+                                    {% else %}
+                                        <form method="post" enctype="multipart/form-data" action="{{ url_for('cadastre_process.upload_unilateral_act', deal_id=deal.deal_id) }}" class="d-flex align-items-center">
+                                            <input type="file" name="scan" class="form-control form-control-sm" required>
+                                            <button type="submit" class="btn btn-sm btn-secondary ms-2 flex-shrink-0">Загрузить скан</button>
+                                        </form>
+                                    {% endif %}
+
                                 {% endif %}
                             {% else %}
                                 <div class="form-check form-switch">
@@ -86,8 +111,8 @@
                         {% endif %}
                     </td>
                     <td class="text-center timer-cell">
-                        {% if status and status.group_key == '1_no_issues' and status.status == 'pending_arrival' and not deal.is_timed_out and deal.deadline_iso %}
-                            <span class="countdown-timer fw-bold" data-deadline="{{ deal.deadline_iso }}">...</span>
+                        {% if status and status.status == 'pending_arrival' and not deal.is_timed_out and deal.deadline_iso %}
+                           <span class="countdown-timer fw-bold" data-deadline="{{ deal.deadline_iso }}">...</span>
                         {% else %}
                             <span class="text-muted">--</span>
                         {% endif %}
@@ -101,7 +126,6 @@
     </div>
 </div>
 
-<!-- Пагинация -->
 {% if total_pages > 1 %}
 <nav class="mt-4"><ul class="pagination justify-content-center">
     <li class="page-item {% if current_page == 1 %}disabled{% endif %}"><a class="page-link" href="{{ url_for('cadastre_process.deals_list', page=current_page - 1, group_key=active_group_filter) }}">&laquo;</a></li>
@@ -112,11 +136,55 @@
 </ul></nav>
 {% endif %}
 
-<!-- Модальное окно (остается без изменений) -->
-<div class="modal fade" id="acceptanceModal" tabindex="-1">
-    {# ... #}
+<div class="modal fade" id="acceptanceModal" tabindex="-1" aria-labelledby="acceptanceModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="acceptanceModalLabel">Результаты приемки квартиры</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <form id="acceptance-form" method="post" enctype="multipart/form-data">
+                    <input type="hidden" name="deal_id" id="modal-deal-id">
+                    <div class="mb-3">
+                        <p class="fw-bold">1. Клиент подписал акт?</p>
+                        <div class="form-check form-check-inline">
+                            <input class="form-check-input" type="radio" name="is_signed" id="is_signed_yes" value="true" required>
+                            <label class="form-check-label" for="is_signed_yes">Да</label>
+                        </div>
+                        <div class="form-check form-check-inline">
+                            <input class="form-check-input" type="radio" name="is_signed" id="is_signed_no" value="false">
+                            <label class="form-check-label" for="is_signed_no">Нет</label>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="signed_act" class="form-label">2. Загрузите скан подписанного акта</label>
+                        <input class="form-control" type="file" id="signed_act" name="signed_act">
+                    </div>
+                    <hr>
+                    <div class="mb-3">
+                        <p class="fw-bold">3. Клиент составил дефектный лист?</p>
+                        <div class="form-check form-check-inline">
+                            <input class="form-check-input" type="radio" name="has_defects" id="has_defects_yes" value="true" required>
+                            <label class="form-check-label" for="has_defects_yes">Да</label>
+                        </div>
+                        <div class="form-check form-check-inline">
+                            <input class="form-check-input" type="radio" name="has_defects" id="has_defects_no" value="false">
+                            <label class="form-check-label" for="has_defects_no">Нет</label>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="defect_list" class="form-label">4. Загрузите скан дефектного листа</label>
+                        <input class="form-control" type="file" id="defect_list" name="defect_list">
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                <button type="button" class="btn btn-primary" id="save-acceptance-results">Сохранить</button>
+            </div>
+        </div>
+    </div>
 </div>
-
-<!-- JavaScript -->
 <script src="{{ url_for('static', filename='js/deals_list.js') }}"></script>
 {% endblock %}
