@@ -2,11 +2,67 @@
 {% extends "base.html" %}
 
 {% block content %}
+<style>
+    /* Стили для шахматки */
+    .checkerboard td {
+        vertical-align: middle;
+        min-width: 90px;
+    }
+    .checkerboard .floor-label {
+        background-color: #e9ecef;
+        position: sticky;
+        left: 0;
+        z-index: 1;
+    }
+    .deal-cell .prop-id { font-size: 1.1rem; }
+    .deal-cell .area-diff { font-size: 0.8rem; }
+</style>
 <div class="d-flex justify-content-between align-items-center mb-3">
     <h2>Результаты обработки</h2>
-    <a href="{{ url_for('cadastre_process.upload_page') }}" class="btn btn-secondary">Вернуться к загрузке</a>
+    <div>
+        <a href="{{ url_for('cadastre_process.download_checkerboard') }}" class="btn btn-success">Скачать шахматку (Excel)</a>
+        <a href="{{ url_for('cadastre_process.deals_list') }}" class="btn btn-primary">Перейти к списку сделок</a>
+        <a href="{{ url_for('cadastre_process.upload_page') }}" class="btn btn-secondary">Вернуться к загрузке</a>
+    </div>
 </div>
+<div class="card mb-4">
+    <div class="card-body">
+        <h4 class="card-title">Сводка по объекту</h4>
+        <p class="fs-5">
+            Всего найдено и обработано: <span class="fw-bold">{{ total_apartments }}</span> квартир.
+        </p>
 
+        {% if checkerboard %}
+        <h5 class="mt-4">Шахматка расхождений по площади, м²</h5>
+        <div class="table-responsive">
+            <table class="table table-bordered text-center checkerboard">
+                <tbody>
+                    {% for floor, apartments in checkerboard.items() %}
+                    <tr>
+                        <td class="fw-bold floor-label">Этаж {{ floor }}</td>
+                        {% for deal in apartments %}
+                            {% set diff = deal.area_diff %}
+                            {# Выбираем цвет ячейки в зависимости от расхождения #}
+                            {% if diff > 0.1 %}
+                                {% set bg_class = 'table-success' %}
+                            {% elif diff < -0.1 %}
+                                {% set bg_class = 'table-danger' %}
+                            {% else %}
+                                {% set bg_class = 'table-light' %}
+                            {% endif %}
+                        <td class="{{ bg_class }} deal-cell">
+                            <div class="fw-bold prop-id">{{ deal.property_id }}</div>
+                            <div class="area-diff">{{ '%+.2f'|format(diff) }}</div>
+                        </td>
+                        {% endfor %}
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% endif %}
+    </div>
+</div>
 <p class="text-muted">Нажмите на категорию, чтобы развернуть список сделок.</p>
 
 {# Макрос для рендеринга списка сделок внутри аккордеона #}

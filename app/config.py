@@ -2,14 +2,19 @@
 import os
 from dotenv import load_dotenv
 
-# Загружаем переменные из .env файла в корне проекта
 load_dotenv()
-
 
 class Config:
     SECRET_KEY = os.environ.get('SECRET_KEY') or 'a-very-secret-key'
 
-    # Используем ваш формат, но с безопасной загрузкой данных из .env
+    # --- ДОБАВЬТЕ ЭТИ СТРОКИ ---
+    # Указываем, что сессии теперь хранятся на сервере в файловой системе
+    SESSION_TYPE = 'filesystem'
+    # Говорим сессии не подписывать cookie, так как мы храним там только ID
+    SESSION_PERMANENT = False
+    SESSION_USE_SIGNER = True
+    # --- КОНЕЦ НОВЫХ СТРОК ---
+
     MYSQL_DATABASE_URI = (
         f"mysql+pymysql://"
         f"{os.environ.get('MYSQL_USER')}:{os.environ.get('MYSQL_PASSWORD')}"

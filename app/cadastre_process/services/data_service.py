@@ -27,10 +27,8 @@ def get_apartments_for_house(house_id: int):
     db_session = MysqlSession()
     try:
         query = text("""
-            SELECT es.geo_flatnum FROM estate_deals d
-            JOIN estate_sells es ON d.estate_sell_id = es.id
-            WHERE d.house_id = :h_id 
-              AND d.deal_status_name IN ('Сделка в работе', 'Сделка проведена')
+            SELECT es.geo_flatnum FROM estate_sells es
+            WHERE es.house_id = :h_id 
               AND es.estate_sell_category = 'flat'
             ORDER BY CAST(es.geo_flatnum AS UNSIGNED);
         """)
@@ -40,34 +38,47 @@ def get_apartments_for_house(house_id: int):
 
 
 def get_deals_data(db_session, property_ids: list, house_id: int):
-    """Получает детальную информацию по сделкам из MySQL для основной обработки."""
+    """
+    Получает данные по всем объектам из estate_sells. Если для объекта есть активная
+    сделка, присоединяет данные из нее.
+    """
     query = text("""
         SELECT
-            d.id as deal_id, es.geo_flatnum, d.deal_area, d.seller_contacts_id,
+            es.geo_flatnum,
+            es.estate_floor,
+            es.estate_sell_status_name,
+            es.estate_area, -- Базовая площадь из объекта
+            d.id as deal_id,
+            d.deal_area,  -- Площадь из сделки (может быть NULL)
+            d.deal_status_name,
+            d.seller_contacts_id,
             (d.finances_income_reserved > 0) AS has_debt,
-            edc.contacts_buy_name, edc.contacts_buy_phones, edc.contacts_buy_type
-        FROM estate_deals d
-        JOIN estate_sells es ON d.estate_sell_id = es.id
+            edc.contacts_buy_name
+        FROM estate_sells es
+        LEFT JOIN estate_deals d ON es.id = d.estate_sell_id AND d.deal_status_name IN ('Сделка в работе', 'Сделка проведена')
         LEFT JOIN estate_deals_contacts edc ON d.contacts_buy_id = edc.id
-        WHERE d.house_id = :h_id 
+        WHERE es.house_id = :h_id
           AND es.geo_flatnum IN :p_ids
-          AND d.deal_status_name IN ('Сделка в работе', 'Сделка проведена')
           AND es.estate_sell_category = 'flat';
     """)
     result = db_session.execute(query, {'p_ids': property_ids, 'h_id': house_id}).fetchall()
 
-    deals_data = {}
+    properties_data = {}
     for row in result:
-        deals_data[str(row.geo_flatnum)] = {
+        # Логика выбора площади: приоритет у сделки, если ее нет - берем из объекта
+        contract_area = row.deal_area if row.deal_area is not None else row.estate_area
+
+        properties_data[str(row.geo_flatnum)] = {
             'deal_id': row.deal_id,
-            'contract_area': row.deal_area,
+            'contract_area': contract_area or 0,
             'client_id': row.seller_contacts_id,
+            'floor': row.estate_floor,
             'has_debt': bool(row.has_debt),
             'client_name': row.contacts_buy_name,
-            'client_phone': row.contacts_buy_phones,
-            'client_type': 'Юр. лицо' if row.contacts_buy_type == 1 else 'Физ. лицо'
+            'deal_status_name': row.deal_status_name,
+            'sell_status_name': row.estate_sell_status_name
         }
-    return deals_data
+    return properties_data
 
 
 def get_filtered_deals(filters: dict, page: int, per_page: int):

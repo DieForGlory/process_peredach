@@ -5,7 +5,8 @@ from flask import (
     render_template, request, flash, redirect, url_for, send_file, session, jsonify
 )
 from werkzeug.utils import secure_filename
-
+from collections import defaultdict # Убедитесь, что этот импорт есть
+from .services.export_service import generate_checkerboard_excel
 from . import cadastre_bp
 from .services.data_service import (
     get_complexes_and_houses, get_single_deal_details,
@@ -17,7 +18,7 @@ from .services.file_service import (
 )
 from .services.processing_service import process_cadastre_data
 from .workflows.group_1_workflow import generate_unilateral_act
-
+from collections import defaultdict
 UPLOAD_FOLDER = 'uploads'
 if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
@@ -28,6 +29,44 @@ def upload_page():
     houses_data = get_complexes_and_houses()
     return render_template('upload.html', houses_data=houses_data)
 
+@cadastre_bp.route('/download-checkerboard')
+def download_checkerboard():
+    """Готовит данные и отдает Excel-файл с шахматкой для скачивания."""
+    results = session.get('categorized_results')
+    if not results:
+        flash('Данные для генерации файла не найдены. Пожалуйста, загрузите файл заново.', 'warning')
+        return redirect(url_for('cadastre_process.upload_page'))
+
+    # Эта логика полностью повторяет подготовку данных из маршрута show_results
+    all_deals = [deal for deals_in_group in results.values() for deal in deals_in_group]
+    checkerboard_data = defaultdict(list)
+    for deal in all_deals:
+        floor = deal.get('floor') or 'N/A'
+        checkerboard_data[floor].append(deal)
+
+    for floor in checkerboard_data:
+        try:
+            checkerboard_data[floor].sort(key=lambda x: int(x['property_id']))
+        except ValueError:
+            checkerboard_data[floor].sort(key=lambda x: x['property_id'])
+
+    sorted_floors = sorted(
+        checkerboard_data.keys(),
+        key=lambda x: (isinstance(x, str), -float(x) if isinstance(x, (int, float)) else 0),
+        reverse=False
+    )
+    sorted_checkerboard = {floor: checkerboard_data[floor] for floor in sorted_floors}
+
+    # Генерируем Excel-файл в памяти
+    excel_buffer = generate_checkerboard_excel(sorted_checkerboard)
+
+    # Отдаем файл пользователю
+    return send_file(
+        excel_buffer,
+        as_attachment=True,
+        download_name='checkerboard.xlsx',
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
 
 @cadastre_bp.route('/process-upload', methods=['POST'])
 def process_upload():
@@ -54,7 +93,7 @@ def process_upload():
     results = process_cadastre_data(cadastre_data, house_id)
 
     session['categorized_results'] = results
-    return redirect(url_for('cadastre_process.deals_list'))
+    return redirect(url_for('cadastre_process.show_results'))
 
 
 @cadastre_bp.route('/results')
@@ -65,7 +104,39 @@ def show_results():
         flash('Нет данных для отображения. Пожалуйста, загрузите файл заново.', 'info')
         return redirect(url_for('cadastre_process.upload_page'))
 
-    return render_template('results.html', results=results)
+    # --- НОВЫЙ КОД ДЛЯ ПОДГОТОВКИ ДАННЫХ ---
+    all_deals = [deal for deals_in_group in results.values() for deal in deals_in_group]
+    total_apartments = len(all_deals)
+
+    checkerboard_data = defaultdict(list)
+    for deal in all_deals:
+        floor = deal.get('floor') or 'N/A'  # Группируем квартиры без этажа в отдельную категорию
+        checkerboard_data[floor].append(deal)
+
+    # Сортируем квартиры внутри каждого этажа по номеру
+    for floor in checkerboard_data:
+        # Пытаемся сортировать номера как числа, если не получается - как строки
+        try:
+            checkerboard_data[floor].sort(key=lambda x: int(x['property_id']))
+        except ValueError:
+            checkerboard_data[floor].sort(key=lambda x: x['property_id'])
+
+    # Сортируем сами этажи (сначала числовые по убыванию, потом 'N/A')
+    sorted_floors = sorted(
+        checkerboard_data.keys(),
+        key=lambda x: (isinstance(x, str), -float(x) if isinstance(x, (int, float)) else 0),
+        reverse=False
+    )
+
+    sorted_checkerboard = {floor: checkerboard_data[floor] for floor in sorted_floors}
+    # --- КОНЕЦ НОВОГО КОДА ---
+
+    return render_template(
+        'results.html',
+        results=results,
+        total_apartments=total_apartments,
+        checkerboard=sorted_checkerboard
+    )
 
 
 @cadastre_bp.route('/deals')
@@ -78,11 +149,20 @@ def deals_list():
         flash('Нет обработанных данных для отображения. Пожалуйста, загрузите файл.', 'info')
         return redirect(url_for('cadastre_process.upload_page'))
 
-    all_deals = []
+    all_deals_unfiltered = []
     for group_key, deals_in_group in categorized_results.items():
         for deal in deals_in_group:
             deal['group_key'] = group_key
-            all_deals.append(deal)
+            all_deals_unfiltered.append(deal)
+
+    # --- ИСПРАВЛЕННЫЙ БЛОК ФИЛЬТРАЦИИ ---
+    # Теперь мы отбираем в список все квартиры, у которых есть ID сделки.
+    # Это гораздо надежнее, чем фильтровать по текстовому статусу.
+    all_deals = [
+        d for d in all_deals_unfiltered
+        if d.get('deal_id') is not None
+    ]
+    # --- КОНЕЦ ИСПРАВЛЕННОГО БЛОКА ---
 
     all_deal_ids = [d['deal_id'] for d in all_deals]
     statuses_map = get_statuses_for_deals(all_deal_ids)

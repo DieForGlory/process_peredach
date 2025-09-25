@@ -14,28 +14,37 @@ def process_cadastre_data(cadastre_data: dict, house_id: int):
 
     db_session_mysql = MysqlSession()
     try:
-        deals_from_db = get_deals_data(db_session_mysql, property_ids, house_id)
+        properties_from_db = get_deals_data(db_session_mysql, property_ids, house_id)
     finally:
         MysqlSession.remove()
 
     categorized_deals = defaultdict(list)
     for prop_id, cadastre_area in cadastre_data.items():
-        deal = deals_from_db.get(prop_id)
-        if not deal:
+        prop_data = properties_from_db.get(prop_id)
+        if not prop_data:
             continue
 
-        contract_area = float(deal['contract_area'])
+        # --- НОВОЕ ПРАВИЛО ---
+        # Если у объекта нет ID сделки, мы не добавляем его в группы для клиентов.
+        if not prop_data.get('deal_id'):
+            continue
+        # --- КОНЕЦ НОВОГО ПРАВИЛА ---
+
+        contract_area = float(prop_data.get('contract_area', 0))
         area_diff = cadastre_area - contract_area
 
         deal_info = {
-            'deal_id': deal['deal_id'],
+            'deal_id': prop_data.get('deal_id'),
             'property_id': prop_id,
             'area_diff': round(area_diff, 2),
-            'client_id': deal['client_id'],
-            'client_name': deal['client_name']
+            'client_id': prop_data.get('client_id'),
+            'client_name': prop_data.get('client_name'),
+            'floor': prop_data.get('floor'),
+            'sell_status_name': prop_data.get('sell_status_name'),
+            'deal_status_name': prop_data.get('deal_status_name')
         }
 
-        has_debt = deal['has_debt']
+        has_debt = prop_data.get('has_debt', False)
         area_change = 'increase' if area_diff > 2 else 'decrease' if area_diff < -2 else 'no_change'
 
         key_map = {
@@ -48,38 +57,42 @@ def process_cadastre_data(cadastre_data: dict, house_id: int):
             categorized_deals[key].append(deal_info)
 
     try:
+        # Этот блок обновляет статусы только для сделок, которые попали в группы,
+        # так что здесь ничего менять не нужно.
         all_deals_map = {
             deal['deal_id']: {'group_key': group_key, **deal}
-            for group_key, deals in categorized_deals.items() for deal in deals
+            for group_key, deals in categorized_deals.items() for deal in deals if deal.get('deal_id')
         }
-        all_deal_ids = list(all_deals_map.keys())
 
-        existing_statuses = DealStatus.query.filter(DealStatus.deal_id.in_(all_deal_ids)).all()
-        existing_status_map = {s.deal_id: s for s in existing_statuses}
+        if all_deals_map:
+            all_deal_ids = list(all_deals_map.keys())
 
-        for deal_id, deal_info in all_deals_map.items():
-            status = existing_status_map.get(deal_id)
-            if status:
-                status.group_key = deal_info['group_key']
-                status.status = 'processing'
-                status.documents_delivered_at = None
-                status.client_arrived_at = None
-                status.unilateral_act_downloaded_at = None
-                status.unilateral_act_uploaded_path = None
-                status.acceptance_act_downloaded_at = None
-                status.is_act_signed = None
-                status.has_defect_list = None
-                status.signed_act_uploaded_path = None
-                status.defect_list_uploaded_path = None
-            else:
-                new_status = DealStatus(
-                    deal_id=deal_id,
-                    group_key=deal_info['group_key'],
-                    status='processing'
-                )
-                db.session.add(new_status)
+            existing_statuses = DealStatus.query.filter(DealStatus.deal_id.in_(all_deal_ids)).all()
+            existing_status_map = {s.deal_id: s for s in existing_statuses}
 
-        db.session.commit()
+            for deal_id, deal_info in all_deals_map.items():
+                status = existing_status_map.get(deal_id)
+                if status:
+                    status.group_key = deal_info['group_key']
+                    status.status = 'processing'
+                    status.documents_delivered_at = None
+                    status.client_arrived_at = None
+                    status.unilateral_act_downloaded_at = None
+                    status.unilateral_act_uploaded_path = None
+                    status.acceptance_act_downloaded_at = None
+                    status.is_act_signed = None
+                    status.has_defect_list = None
+                    status.signed_act_uploaded_path = None
+                    status.defect_list_uploaded_path = None
+                else:
+                    new_status = DealStatus(
+                        deal_id=deal_id,
+                        group_key=deal_info['group_key'],
+                        status='processing'
+                    )
+                    db.session.add(new_status)
+
+            db.session.commit()
     except Exception as e:
         db.session.rollback()
         print(f"Ошибка при обновлении/создании статусов: {e}")

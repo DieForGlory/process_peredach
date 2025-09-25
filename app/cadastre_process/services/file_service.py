@@ -4,7 +4,8 @@ import pandas as pd
 import io
 import docx
 import zipfile
-from .data_service import get_apartments_for_house  # Импортируем из соседнего файла
+import re
+from .data_service import get_apartments_for_house
 
 
 def generate_apartment_template(house_id: int):
@@ -26,17 +27,119 @@ def generate_apartment_template(house_id: int):
     return output
 
 
+def _parse_template_format(df):
+    """Разбирает стандартный формат шаблона."""
+    if 'Номер квартиры' not in df.columns or 'КадастроваяПлощадь' not in df.columns:
+        return None
+    df.dropna(subset=['КадастроваяПлощадь'], inplace=True)
+    if df.empty:
+        return {}
+    df['Номер квартиры'] = df['Номер квартиры'].astype(str)
+    return pd.Series(df.КадастроваяПлощадь.values, index=df['Номер квартиры']).to_dict()
+
+
+def _parse_xonadon_format(df):
+    """Разбирает формат с заголовками 'X-Xonadon', включая промежуточные блоки 'Zinapoya'."""
+    print("\n--- Логирование: Начата обработка формата 'Xonadon' ---")
+    cadastre_data = {}
+
+    # --- ИЗМЕНЕННАЯ ЛОГИКА ---
+    # 1. Находим все маркеры секций (Xonadon, Zinapoya) и их индексы
+    markers = []
+    for idx, value in df[0].astype(str).dropna().items():
+        if 'Xonadon' in value:
+            markers.append({'index': idx, 'type': 'Xonadon', 'value': value})
+        elif 'Zinapoya' in value:
+            markers.append({'index': idx, 'type': 'Zinapoya', 'value': value})
+
+    if not markers:
+        print("!!! Ошибка: Не найдено ни одной строки-заголовка с 'Xonadon'.")
+        return None
+
+    print(f"Найдено {len(markers)} маркеров секций.")
+
+    # 2. Добавляем фиктивный маркер конца файла, чтобы обработать последний блок
+    markers.append({'index': len(df), 'type': 'EOF', 'value': 'EOF'})
+
+    # 3. Итерируемся по маркерам для определения границ
+    for i in range(len(markers) - 1):
+        current_marker = markers[i]
+        next_marker = markers[i + 1]
+
+        # Нас интересуют только блоки, которые начинаются с 'Xonadon'
+        if current_marker['type'] == 'Xonadon':
+            start_idx = current_marker['index']
+            end_idx = next_marker['index'] - 1  # Конец блока - строка перед следующим маркером
+
+            print(f"\n--- Обработка блока '{current_marker['value']}' (строки с {start_idx} по {end_idx}) ---")
+
+            # Извлекаем номер квартиры из заголовка
+            header_text = current_marker['value']
+            match = re.match(r'(\d+)', header_text)
+            if not match:
+                print(f"!!! Предупреждение: Не удалось извлечь номер квартиры из заголовка: '{header_text}'")
+                continue
+            apartment_number = match.group(1)
+            print(f"Из заголовка '{header_text}' извлечен номер квартиры: {apartment_number}")
+
+            # Площадь находится в последней строке блока, в колонке O (индекс 14)
+            area_val = df.iloc[end_idx, 14]
+            print(
+                f"Для квартиры {apartment_number} ищем площадь в строке {end_idx + 1}, колонка O. Найдено значение: '{area_val}'")
+
+            try:
+                if pd.isna(area_val):
+                    print(
+                        f"!!! Предупреждение: Пропускаем квартиру {apartment_number}, так как значение площади пустое.")
+                    continue
+
+                if isinstance(area_val, str):
+                    area = float(area_val.replace(',', '.'))
+                else:
+                    area = float(area_val)
+                cadastre_data[apartment_number] = area
+                print(f"УСПЕХ: Для квартиры {apartment_number} сохранена площадь: {area}")
+            except (ValueError, TypeError) as e:
+                print(
+                    f"!!! ОШИБКА: Не удалось преобразовать значение площади '{area_val}' для квартиры {apartment_number}. Ошибка: {e}")
+                continue
+    # --- КОНЕЦ ИЗМЕНЕННОЙ ЛОГИКИ ---
+
+    print("\n----------------------------------------------------")
+    print(f"ИТОГО: Успешно обработано {len(cadastre_data)} квартир из формата 'Xonadon'.")
+    print(f"Результат: {cadastre_data}")
+    print("--- Логирование: Конец обработки формата 'Xonadon' ---\n")
+    return cadastre_data if cadastre_data else None
+
+
 def parse_cadastre_excel(file_storage):
-    """Читает заполненный пользователем шаблон."""
+    """
+    Определяет формат Excel-файла и разбирает его.
+    Поддерживает стандартный шаблон и новый формат с 'Xonadon'.
+    """
     try:
-        df = pd.read_excel(file_storage)
-        if 'Номер квартиры' not in df.columns or 'КадастроваяПлощадь' not in df.columns:
-            return None
-        df.dropna(subset=['КадастроваяПлощадь'], inplace=True)
-        df['Номер квартиры'] = df['Номер квартиры'].astype(str)
-        return pd.Series(df.КадастроваяПлощадь.values, index=df['Номер квартиры']).to_dict()
+        # 1. Попытка разбора как стандартный шаблон
+        df_template = pd.read_excel(file_storage)
+        template_data = _parse_template_format(df_template.copy())
+        if template_data is not None and template_data:
+            print("Обнаружен и успешно обработан стандартный формат шаблона.")
+            return template_data
+        else:
+            print("Стандартный шаблон не распознан или пуст. Переход к следующему формату.")
+
+        file_storage.seek(0)
+
+        # 2. Попытка разбора как формат 'Xonadon'
+        df_new = pd.read_excel(file_storage, header=None)
+        new_format_data = _parse_xonadon_format(df_new)
+        if new_format_data is not None:
+            return new_format_data
+
+        print("\n!!! КРИТИЧЕСКАЯ ОШИБКА: Не удалось определить формат файла или извлечь данные.")
+        return None
+
     except Exception as e:
-        print(f"Ошибка при чтении Excel файла: {e}")
+        print(f"\n!!! КРИТИЧЕСКАЯ ОШИБКА при чтении Excel файла: {e}")
         return None
 
 
@@ -72,7 +175,6 @@ def generate_single_document(deal: dict, group_key: str):
     """
     Создает один Word-документ в памяти для конкретной сделки.
     """
-    # Тексты уведомлений (эта логика дублируется, в будущем ее можно вынести)
     notification_texts = {
         '1_no_issues': "Уважаемый(ая) {client_name}, по вашей квартире №{apartment_id} нет расхождений по площади и отсутствуют задолженности. Приглашаем вас для получения ключей.",
         '2_debt_only': "Уважаемый(ая) {client_name}, по вашей квартире №{apartment_id} нет расхождений по площади, однако имеется задолженность. Просим вас погасить её перед получением ключей.",

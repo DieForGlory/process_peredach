@@ -53,21 +53,30 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 
     // -------------------------------------------------------------------
-    // ЛОГИКА ДЛЯ КНОПКИ СКАЧИВАНИЯ АКТА
+    // ЛОГИКА ДЛЯ КНОПОК СКАЧИВАНИЯ АКТОВ С ПЕРЕЗАГРУЗКОЙ
     // -------------------------------------------------------------------
-    document.querySelectorAll('.download-acceptance-act-btn').forEach(button => {
+    function handleDownloadAndReload(button) {
         button.addEventListener('click', function(event) {
-            event.preventDefault();
-            const downloadUrl = this.dataset.url;
+            event.preventDefault(); // Предотвращаем стандартный переход по ссылке
+            const downloadUrl = this.href;
             this.disabled = true;
             this.textContent = 'Загрузка...';
+
+            // Инициируем скачивание
             window.location.href = downloadUrl;
+
+            // Перезагружаем страницу через 2 секунды, чтобы интерфейс обновился
             setTimeout(() => window.location.reload(), 2000);
         });
-    });
+    }
+
+    // Применяем логику ко всем кнопкам скачивания, требующим обновления UI
+    document.querySelectorAll('.download-acceptance-act-btn').forEach(handleDownloadAndReload);
+    document.querySelectorAll('.download-unilateral-act-btn').forEach(handleDownloadAndReload);
+
 
     // -------------------------------------------------------------------
-    // ЛОГИКА ДЛЯ ТАЙМЕРА И СКРЫТИЯ КОЛОНКИ
+    // ЛОГИКА ДЛЯ ТАЙМЕРА
     // -------------------------------------------------------------------
     const timerHeader = document.getElementById('timer-header');
     function updateTimers() {
@@ -103,11 +112,29 @@ document.addEventListener('DOMContentLoaded', function() {
     if (acceptanceModal) {
         const modalDealIdInput = document.getElementById('modal-deal-id');
         const form = document.getElementById('acceptance-form');
+        const signedActInput = document.getElementById('signed_act');
+        const defectListInput = document.getElementById('defect_list');
+        const defectListHelp = document.getElementById('defect-list-help');
+
+        // Управление доступностью поля дефектного листа
+        signedActInput.addEventListener('change', function() {
+            if (this.files.length > 0) {
+                defectListInput.disabled = false;
+                if(defectListHelp) defectListHelp.style.display = 'none';
+            } else {
+                defectListInput.disabled = true;
+                defectListInput.value = ''; // Сбрасываем выбранный файл
+                if(defectListHelp) defectListHelp.style.display = 'block';
+            }
+        });
 
         document.querySelectorAll('.open-acceptance-modal').forEach(button => {
             button.addEventListener('click', function() {
                 modalDealIdInput.value = this.dataset.dealId;
                 form.reset();
+                // При открытии модального окна всегда деактивируем поле
+                defectListInput.disabled = true;
+                if(defectListHelp) defectListHelp.style.display = 'block';
             });
         });
 

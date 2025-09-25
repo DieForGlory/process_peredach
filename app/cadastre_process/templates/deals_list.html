@@ -90,7 +90,8 @@
                                     {% if status.unilateral_act_downloaded_at is none %}
                                         <div class="p-2 border rounded bg-light-warning">
                                             <p class="mb-1 small">Клиент отказался подписывать акт и не имеет претензий.</p>
-                                            <a href="{{ url_for('cadastre_process.download_unilateral_act', deal_id=deal.deal_id) }}" class="btn btn-sm btn-warning">Скачать односторонний акт</a>
+                                            {# ДОБАВЛЕН КЛАСС download-unilateral-act-btn #}
+                                            <a href="{{ url_for('cadastre_process.download_unilateral_act', deal_id=deal.deal_id) }}" class="btn btn-sm btn-warning download-unilateral-act-btn">Скачать односторонний акт</a>
                                         </div>
                                     {% else %}
                                         <form method="post" enctype="multipart/form-data" action="{{ url_for('cadastre_process.upload_unilateral_act', deal_id=deal.deal_id) }}" class="d-flex align-items-center">
@@ -175,7 +176,9 @@
                     </div>
                     <div class="mb-3">
                         <label for="defect_list" class="form-label">4. Загрузите скан дефектного листа</label>
-                        <input class="form-control" type="file" id="defect_list" name="defect_list">
+                        {# ДОБАВЛЕН АТРИБУТ disabled #}
+                        <input class="form-control" type="file" id="defect_list" name="defect_list" disabled>
+                        <div class="form-text" id="defect-list-help">Это поле станет активным после загрузки акта.</div>
                     </div>
                 </form>
             </div>
