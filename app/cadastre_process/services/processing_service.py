@@ -24,11 +24,8 @@ def process_cadastre_data(cadastre_data: dict, house_id: int):
         if not prop_data:
             continue
 
-        # --- НОВОЕ ПРАВИЛО ---
-        # Если у объекта нет ID сделки, мы не добавляем его в группы для клиентов.
         if not prop_data.get('deal_id'):
             continue
-        # --- КОНЕЦ НОВОГО ПРАВИЛА ---
 
         contract_area = float(prop_data.get('contract_area', 0))
         area_diff = cadastre_area - contract_area
@@ -37,6 +34,7 @@ def process_cadastre_data(cadastre_data: dict, house_id: int):
             'deal_id': prop_data.get('deal_id'),
             'property_id': prop_id,
             'area_diff': round(area_diff, 2),
+            'contract_area': contract_area,  # <-- ВОТ ЭТА СТРОКА БЫЛА ДОБАВЛЕНА
             'client_id': prop_data.get('client_id'),
             'client_name': prop_data.get('client_name'),
             'floor': prop_data.get('floor'),
@@ -57,8 +55,6 @@ def process_cadastre_data(cadastre_data: dict, house_id: int):
             categorized_deals[key].append(deal_info)
 
     try:
-        # Этот блок обновляет статусы только для сделок, которые попали в группы,
-        # так что здесь ничего менять не нужно.
         all_deals_map = {
             deal['deal_id']: {'group_key': group_key, **deal}
             for group_key, deals in categorized_deals.items() for deal in deals if deal.get('deal_id')

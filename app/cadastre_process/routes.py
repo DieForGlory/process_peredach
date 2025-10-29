@@ -29,42 +29,69 @@ def upload_page():
     houses_data = get_complexes_and_houses()
     return render_template('upload.html', houses_data=houses_data)
 
+
 @cadastre_bp.route('/download-checkerboard')
 def download_checkerboard():
-    """Готовит данные и отдает Excel-файл с шахматкой для скачивания."""
-    results = session.get('categorized_results')
-    if not results:
-        flash('Данные для генерации файла не найдены. Пожалуйста, загрузите файл заново.', 'warning')
+    """Готовит данные для 3-х шахматок и отдает Excel-файл."""
+    categorized_results = session.get('categorized_results')
+    raw_cadastre_data = session.get('raw_cadastre_data')  # Получаем сырые данные
+
+    if not categorized_results or not raw_cadastre_data:
+        flash('Данные для генерации файла не найдены...', 'warning')
         return redirect(url_for('cadastre_process.upload_page'))
 
-    # Эта логика полностью повторяет подготовку данных из маршрута show_results
-    all_deals = [deal for deals_in_group in results.values() for deal in deals_in_group]
-    checkerboard_data = defaultdict(list)
+    # --- ГОТОВИМ ДАННЫЕ ДЛЯ ВСЕХ ШАХМАТОК ---
+
+    # 1. Собираем все сделки и создаем карту "квартира -> этаж"
+    all_deals = [deal for deals_in_group in categorized_results.values() for deal in deals_in_group]
+    floor_map = {str(d['property_id']): d.get('floor') or 'N/A' for d in all_deals}
+
+    # 2. Готовим данные для шахматки "Расхождения" (как и раньше)
+    diff_checkerboard = defaultdict(list)
     for deal in all_deals:
-        floor = deal.get('floor') or 'N/A'
-        checkerboard_data[floor].append(deal)
+        diff_checkerboard[deal.get('floor') or 'N/A'].append(deal)
 
-    for floor in checkerboard_data:
-        try:
-            checkerboard_data[floor].sort(key=lambda x: int(x['property_id']))
-        except ValueError:
-            checkerboard_data[floor].sort(key=lambda x: x['property_id'])
+    # 3. Готовим данные для шахматки "Данные из файла"
+    file_checkerboard = defaultdict(list)
+    for prop_id, area in raw_cadastre_data.items():
+        floor = floor_map.get(str(prop_id), 'N/A')
+        file_checkerboard[floor].append({'property_id': prop_id, 'area': area})
 
-    sorted_floors = sorted(
-        checkerboard_data.keys(),
-        key=lambda x: (isinstance(x, str), -float(x) if isinstance(x, (int, float)) else 0),
-        reverse=False
+    # 4. Готовим данные для шахматки "Данные из БД"
+    db_checkerboard = defaultdict(list)
+    for deal in all_deals:
+        # Используем contract_area, которая уже содержит правильную площадь из БД
+        db_checkerboard[deal.get('floor') or 'N/A'].append({
+            'property_id': deal['property_id'],
+            'area': deal.get('contract_area', 0)
+        })
+
+    # --- СОРТИРОВКА ВСЕХ ШАХМАТОК ---
+    def sort_checkerboard(data):
+        for floor in data:
+            try:
+                data[floor].sort(key=lambda x: int(x['property_id']))
+            except ValueError:
+                data[floor].sort(key=lambda x: x['property_id'])
+
+        sorted_floors = sorted(
+            data.keys(),
+            key=lambda x: (isinstance(x, str), -float(x) if isinstance(x, (int, float)) else 0),
+            reverse=False
+        )
+        return {floor: data[floor] for floor in sorted_floors}
+
+    # --- ВЫЗЫВАЕМ ФУНКЦИЮ ЭКСПОРТА С ТРЕМЯ НАБОРАМИ ДАННЫХ ---
+    excel_buffer = generate_checkerboard_excel(
+        sort_checkerboard(diff_checkerboard),
+        sort_checkerboard(file_checkerboard),
+        sort_checkerboard(db_checkerboard)
     )
-    sorted_checkerboard = {floor: checkerboard_data[floor] for floor in sorted_floors}
 
-    # Генерируем Excel-файл в памяти
-    excel_buffer = generate_checkerboard_excel(sorted_checkerboard)
-
-    # Отдаем файл пользователю
     return send_file(
         excel_buffer,
         as_attachment=True,
-        download_name='checkerboard.xlsx',
+        download_name='checkerboard_report.xlsx',  # Дал файлу более осмысленное имя
         mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     )
 
@@ -92,6 +119,7 @@ def process_upload():
 
     results = process_cadastre_data(cadastre_data, house_id)
 
+    session['raw_cadastre_data'] = cadastre_data
     session['categorized_results'] = results
     return redirect(url_for('cadastre_process.show_results'))
 
