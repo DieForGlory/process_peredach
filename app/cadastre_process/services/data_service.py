@@ -1,3 +1,5 @@
+# app/cadastre_process/services/data_service.py
+
 from collections import defaultdict
 from datetime import datetime, timedelta
 from sqlalchemy import text
@@ -46,6 +48,7 @@ def get_deals_data(db_session, property_ids: list, house_id: int):
         SELECT
             es.geo_flatnum,
             es.estate_floor,
+            es.geo_house_entrance, -- <-- ИСПОЛЬЗУЕМ КОРРЕКТНОЕ ИМЯ ПОЛЯ
             es.estate_sell_status_name,
             es.estate_area, -- Базовая площадь из объекта
             d.id as deal_id,
@@ -73,6 +76,7 @@ def get_deals_data(db_session, property_ids: list, house_id: int):
             'contract_area': contract_area or 0,
             'client_id': row.seller_contacts_id,
             'floor': row.estate_floor,
+            'section': row.geo_house_entrance, # <-- ДОБАВЛЕНЫ ДАННЫЕ О ПОДЪЕЗДЕ
             'has_debt': bool(row.has_debt),
             'client_name': row.contacts_buy_name,
             'deal_status_name': row.deal_status_name,

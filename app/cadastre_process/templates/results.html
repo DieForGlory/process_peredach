@@ -13,9 +13,12 @@
         position: sticky;
         left: 0;
         z-index: 1;
+        min-width: 100px;
     }
     .deal-cell .prop-id { font-size: 1.1rem; }
     .deal-cell .area-diff { font-size: 0.8rem; }
+
+    /* Убираем разделитель, т.к. таблицы теперь отдельные */
 </style>
 <div class="d-flex justify-content-between align-items-center mb-3">
     <h2>Результаты обработки</h2>
@@ -34,38 +37,50 @@
 
         {% if checkerboard %}
         <h5 class="mt-4">Шахматка расхождений по площади, м²</h5>
-        <div class="table-responsive">
-            <table class="table table-bordered text-center checkerboard">
-                <tbody>
-                    {% for floor, apartments in checkerboard.items() %}
-                    <tr>
-                        <td class="fw-bold floor-label">Этаж {{ floor }}</td>
-                        {% for deal in apartments %}
-                            {% set diff = deal.area_diff %}
-                            {# Выбираем цвет ячейки в зависимости от расхождения #}
-                            {% if diff > 0.1 %}
-                                {% set bg_class = 'table-success' %}
-                            {% elif diff < -0.1 %}
-                                {% set bg_class = 'table-danger' %}
-                            {% else %}
-                                {% set bg_class = 'table-light' %}
-                            {% endif %}
-                        <td class="{{ bg_class }} deal-cell">
-                            <div class="fw-bold prop-id">{{ deal.property_id }}</div>
-                            <div class="area-diff">{{ '%+.2f'|format(diff) }}</div>
-                        </td>
+
+        {# --- НАЧАЛО ОБНОВЛЕННОГО ЦИКЛА: ГРУППИРОВКА ПО ПОДЪЕЗДАМ --- #}
+        {% for section, floors in checkerboard.items() %}
+            <h6 class="mt-4">Подъезд: <span class="fw-bold">{{ section }}</span></h6>
+            <div class="table-responsive">
+                <table class="table table-bordered text-center checkerboard">
+                    <tbody>
+                        {# Внутренний цикл по этажам (уже отсортированным) #}
+                        {% for floor, apartments in floors.items() %}
+                        <tr>
+                            <td class="fw-bold floor-label">Этаж {{ floor }}</td>
+
+                            {# Цикл по квартирам (уже отсортированным) #}
+                            {% for deal in apartments %}
+                                {% set diff = deal.area_diff %}
+                                {# Выбираем цвет ячейки в зависимости от расхождения #}
+                                {% if diff > 0.1 %}
+                                    {% set bg_class = 'table-success' %}
+                                {% elif diff < -0.1 %}
+                                    {% set bg_class = 'table-danger' %}
+                                {% else %}
+                                    {% set bg_class = 'table-light' %}
+                                {% endif %}
+                            <td class="{{ bg_class }} deal-cell">
+                                <div class="fw-bold prop-id">{{ deal.property_id }}</div>
+                                <div class="area-diff">{{ '%+.2f'|format(diff) }}</div>
+                            </td>
+                            {% endfor %}
+                        </tr>
                         {% endfor %}
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
+                    </tbody>
+                </table>
+            </div>
+        {% else %}
+            <p class="text-muted">Нет данных для отображения.</p>
+        {% endfor %}
+        {# --- КОНЕЦ ОБНОВЛЕННОГО ЦИКЛА --- #}
+
         {% endif %}
     </div>
 </div>
 <p class="text-muted">Нажмите на категорию, чтобы развернуть список сделок.</p>
 
-{# Макрос для рендеринга списка сделок внутри аккордеона #}
+{# ... (остальная часть файла с аккордеоном остается без изменений) ... #}
 {% macro render_deals_list(deals) %}
   {% if deals %}
     <ul class="list-group">

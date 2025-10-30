@@ -34,10 +34,11 @@ def process_cadastre_data(cadastre_data: dict, house_id: int):
             'deal_id': prop_data.get('deal_id'),
             'property_id': prop_id,
             'area_diff': round(area_diff, 2),
-            'contract_area': contract_area,  # <-- ВОТ ЭТА СТРОКА БЫЛА ДОБАВЛЕНА
+            'contract_area': contract_area,
             'client_id': prop_data.get('client_id'),
             'client_name': prop_data.get('client_name'),
             'floor': prop_data.get('floor'),
+            'section': prop_data.get('section', 'N/A'), # <-- ДОБАВЛЕНО ПОЛЕ
             'sell_status_name': prop_data.get('sell_status_name'),
             'deal_status_name': prop_data.get('deal_status_name')
         }
@@ -71,6 +72,7 @@ def process_cadastre_data(cadastre_data: dict, house_id: int):
                 if status:
                     status.group_key = deal_info['group_key']
                     status.status = 'processing'
+                    # ... (сброс полей)
                     status.documents_delivered_at = None
                     status.client_arrived_at = None
                     status.unilateral_act_downloaded_at = None
