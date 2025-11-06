@@ -2,6 +2,7 @@
 
 from collections import defaultdict
 from datetime import datetime, timedelta
+
 from sqlalchemy import text
 
 from app import db
@@ -41,22 +42,29 @@ def get_apartments_for_house(house_id: int):
 
 def get_deals_data(db_session, property_ids: list, house_id: int):
     """
-    Получает данные по всем объектам из estate_sells. Если для объекта есть активная
-    сделка, присоединяет данные из нее.
+    (Обновлено: добавлен d.deal_sum)
     """
     query = text("""
         SELECT
             es.geo_flatnum,
             es.estate_floor,
-            es.geo_house_entrance, -- <-- ИСПОЛЬЗУЕМ КОРРЕКТНОЕ ИМЯ ПОЛЯ
+            es.geo_house_entrance,
             es.estate_sell_status_name,
-            es.estate_area, -- Базовая площадь из объекта
+            es.estate_area,
             d.id as deal_id,
-            d.deal_area,  -- Площадь из сделки (может быть NULL)
+            d.deal_area,
             d.deal_status_name,
             d.seller_contacts_id,
-            (d.finances_income_reserved > 0) AS has_debt,
-            edc.contacts_buy_name
+            d.deal_sum, -- <-- ДОБАВЛЕНО ПОЛЕ СУММЫ ДОГОВОРА
+            edc.contacts_buy_name,
+
+            (SELECT 1 FROM finances p
+             WHERE p.deal_id = d.id
+               AND p.status_name = 'К оплате'
+               AND p.date_to < NOW()
+             LIMIT 1
+            ) IS NOT NULL AS has_debt
+
         FROM estate_sells es
         LEFT JOIN estate_deals d ON es.id = d.estate_sell_id AND d.deal_status_name IN ('Сделка в работе', 'Сделка проведена')
         LEFT JOIN estate_deals_contacts edc ON d.contacts_buy_id = edc.id
@@ -68,37 +76,66 @@ def get_deals_data(db_session, property_ids: list, house_id: int):
 
     properties_data = {}
     for row in result:
-        # Логика выбора площади: приоритет у сделки, если ее нет - берем из объекта
         contract_area = row.deal_area if row.deal_area is not None else row.estate_area
 
         properties_data[str(row.geo_flatnum)] = {
             'deal_id': row.deal_id,
+            'deal_sum': row.deal_sum or 0,  # <-- ДОБАВЛЕНО ПОЛЕ
             'contract_area': contract_area or 0,
             'client_id': row.seller_contacts_id,
             'floor': row.estate_floor,
-            'section': row.geo_house_entrance, # <-- ДОБАВЛЕНЫ ДАННЫЕ О ПОДЪЕЗДЕ
+            'section': row.geo_house_entrance,
             'has_debt': bool(row.has_debt),
             'client_name': row.contacts_buy_name,
             'deal_status_name': row.deal_status_name,
             'sell_status_name': row.estate_sell_status_name
         }
     return properties_data
-
+def check_increase_payment(deal_id: int, required_amount: float):
+    """
+    Проверяет, был ли платеж "Проведено" на сумму доплаты за метры.
+    """
+    db_session_mysql = MysqlSession()
+    try:
+        # Ищем платеж, который соответствует сделке, статусу и сумме (с погрешностью 0.01)
+        query = text("""
+            SELECT 1
+            FROM finances
+            WHERE deal_id = :deal_id
+              AND status_name = 'Проведено'
+              AND ABS(amount - :amount) < 0.01
+            LIMIT 1;
+        """)
+        result = db_session_mysql.execute(
+            query,
+            {'deal_id': deal_id, 'amount': required_amount}
+        ).scalar_one_or_none()
+        return bool(result)
+    finally:
+        MysqlSession.remove()
 
 def get_filtered_deals(filters: dict, page: int, per_page: int):
     """
     Получает сделки из MySQL, а затем обогащает их статусами из SQLite.
+    (Использует 'finances' для 'last_overdue_payment_date')
     """
-    # Шаг 1: Получаем основные данные по сделкам из MySQL
     db_session_mysql = MysqlSession()
     deals_for_page = []
     total_count = 0
     try:
+        # ИСПОЛЬЗУЕМ 'finances' ВМЕСТО 'estate_deals_payments'
         base_query = """
             FROM estate_deals d
             JOIN estate_sells es ON d.estate_sell_id = es.id
             JOIN estate_houses h ON d.house_id = h.id
             LEFT JOIN estate_deals_contacts edc ON d.contacts_buy_id = edc.id
+            LEFT JOIN (
+                SELECT deal_id, MIN(date_to) as first_overdue_payment_date
+                FROM finances
+                WHERE status_name = 'К оплате'
+                  AND date_to < NOW()
+                GROUP BY deal_id
+            ) p ON d.id = p.deal_id
         """
         where_clauses = ["es.estate_sell_category = 'flat'"]
         params = {}
@@ -119,7 +156,8 @@ def get_filtered_deals(filters: dict, page: int, per_page: int):
         data_query_str = f"""
             SELECT d.id as deal_id, d.deal_status_name, es.geo_flatnum, 
                    h.complex_name, h.name as house_name, d.finances_income_reserved,
-                   edc.contacts_buy_name, edc.contacts_buy_phones
+                   edc.contacts_buy_name, edc.contacts_buy_phones,
+                   d.deal_sum, p.first_overdue_payment_date
             {base_query} {where_sql}
             ORDER BY d.id DESC
             LIMIT :limit OFFSET :offset
@@ -136,14 +174,14 @@ def get_filtered_deals(filters: dict, page: int, per_page: int):
         statuses = DealStatus.query.filter(DealStatus.deal_id.in_(deal_ids)).all()
         status_map = {s.deal_id: s for s in statuses}
 
-        # Шаг 3: Объединяем данные, добавляя статус и вычисляя дедлайн
+        # Шаг 3: Объединяем данные
         for deal in deals_for_page:
             status_obj = status_map.get(deal['deal_id'])
             deal['status_obj'] = status_obj
             deal['is_timed_out'] = False
             deal['deadline_iso'] = None
 
-            if status_obj and status_obj.documents_delivered_at:
+            if status_obj and status_obj.documents_delivered_at and status_obj.status == 'pending_arrival':
                 deadline = status_obj.documents_delivered_at + timedelta(days=30)
                 deal['is_timed_out'] = datetime.utcnow() > deadline
                 deal['deadline_iso'] = deadline.isoformat()
@@ -168,24 +206,118 @@ def get_single_deal_details(deal_id: int):
         MysqlSession.remove()
 
 
+def get_single_deal_details_for_workflow(deal_id: int):
+    """
+    Получает детальную информацию (включая финансы) для фонового обработчика.
+    (Использует 'finances')
+    """
+    db_session_mysql = MysqlSession()
+    try:
+        # ИСПОЛЬЗУЕМ 'finances' ВМЕСТО 'estate_deals_payments'
+        query = text("""
+            SELECT 
+                d.id as deal_id, 
+                es.geo_flatnum as property_id, 
+                edc.contacts_buy_name as client_name,
+                d.deal_sum,
+                p.first_overdue_payment_date
+            FROM estate_deals d
+            JOIN estate_sells es ON d.estate_sell_id = es.id
+            LEFT JOIN estate_deals_contacts edc ON d.contacts_buy_id = edc.id
+            LEFT JOIN (
+                SELECT 
+                    deal_id,
+                    MIN(date_to) as first_overdue_payment_date
+                FROM finances
+                WHERE status_name = 'К оплате'
+                  AND date_to < NOW()
+                GROUP BY deal_id
+            ) p ON d.id = p.deal_id
+            WHERE d.id = :deal_id
+        """)
+        result = db_session_mysql.execute(query, {'deal_id': deal_id}).fetchone()
+        return dict(result._mapping) if result else {}
+    finally:
+        MysqlSession.remove()
+
+
+def check_debt_status_from_mysql(deal_id: int):
+    """
+    Быстро проверяет ТОЛЬКО статус долга в MySQL по новой логике.
+    (Использует 'finances')
+    """
+    db_session_mysql = MysqlSession()
+    try:
+        # ИСПОЛЬЗУЕМ 'finances' ВМЕСТО 'estate_deals_payments'
+        query = text("""
+            SELECT 1
+            FROM finances
+            WHERE deal_id = :deal_id
+              AND status_name = 'К оплате'
+              AND date_to < NOW()
+            LIMIT 1;
+        """)
+        result = db_session_mysql.execute(query, {'deal_id': deal_id}).scalar_one_or_none()
+        return bool(result)
+    finally:
+        MysqlSession.remove()
+
+
 def update_deal_status(deal_id: int, action: str, data=None):
-    """Центральная функция для обновления статуса сделки в SQLite."""
+    """
+    Центральная функция для обновления статуса сделки в SQLite.
+    (Обновлена логика 'mark_delivered' и 'mark_arrived')
+    """
     try:
         status = DealStatus.query.get(deal_id)
         if not status: return False
 
         if action == 'mark_delivered':
-            status.documents_delivered_at = datetime.utcnow()
-            status.status = 'pending_arrival'
+            # --- ОБНОВЛЕННАЯ ЛОГИКА ЗАПУСКА ТАЙМЕРОВ ---
+            current_time = datetime.utcnow()
+
+            if status.group_key in ('3_debt_and_increase', '5_increase_only'):
+                # Группы 3 и 5 (Увеличение): Запускаем 10-дневный таймер на подписание ДС
+                status.status = 'pending_increase_signing'
+                status.area_increase_agreement_deadline = current_time + timedelta(days=10)
+
+            elif status.group_key == '2_debt_only':
+                # Группа 2 (Долг): Запускаем 10-дневный таймер на погашение долга
+                status.status = 'pending_debt_payment'
+                status.debt_payment_deadline = current_time + timedelta(days=10)
+
+            else:
+                # Группа 1 (Без проблем): Запускаем 30-дневный таймер на визит
+                status.documents_delivered_at = current_time
+                status.status = 'pending_arrival'
+
         elif action == 'mark_arrived':
+            # Если клиент пришел, он переходит на этап приемки,
+            # все таймеры (долг, ДС) больше не нужны.
             status.client_arrived_at = datetime.utcnow()
             status.status = 'acceptance_pending'
+            status.debt_payment_deadline = None
+            status.penalty_check_deadline = None
+            status.area_increase_agreement_deadline = None
+            status.area_increase_payment_deadline = None
+            status.area_increase_penalty_deadline = None
 
-        # --- ОБНОВЛЕННЫЕ ДЕЙСТВИЯ ---
+        # --- НОВЫЙ БЛОК ДЛЯ СЦЕНАРИЯ УВЕЛИЧЕНИЯ ПЛОЩАДИ ---
+        elif action == 'mark_increase_agreement_signed':
+            status.area_increase_signed_at = datetime.utcnow()
+            status.area_increase_scan_path = data.get('filepath')
+            status.status = 'pending_increase_payment'
+            # Запускаем 30-дневный таймер на оплату доплаты
+            status.area_increase_payment_deadline = datetime.utcnow() + timedelta(days=30)
+            # Сбрасываем 10-дневный таймер подписания
+            status.area_increase_agreement_deadline = None
+
+        # --- (Остальные actions 'acceptance_act_downloaded' и т.д. без изменений) ---
         elif action == 'acceptance_act_downloaded':
             status.acceptance_act_downloaded_at = datetime.utcnow()
 
         elif action == 'process_acceptance':
+            # ... (без изменений)
             is_signed = data.get('is_signed')
             has_defects = data.get('has_defects')
             status.is_act_signed = is_signed
@@ -194,17 +326,21 @@ def update_deal_status(deal_id: int, action: str, data=None):
                 status.status = 'unilateral_pending'
 
         elif action == 'upload_signed_act':
+            # ... (без изменений)
             status.signed_act_uploaded_path = data
             if not status.has_defect_list:
                 status.status = 'completed'
         elif action == 'upload_defect_list':
+            # ... (без изменений)
             status.defect_list_uploaded_path = data
             if status.signed_act_uploaded_path:
                 status.status = 'completed'
 
         elif action == 'act_downloaded':
+            # ... (без изменений)
             status.unilateral_act_downloaded_at = datetime.utcnow()
         elif action == 'act_uploaded':
+            # ... (без изменений)
             status.unilateral_act_uploaded_path = data
             status.status = 'completed'
 

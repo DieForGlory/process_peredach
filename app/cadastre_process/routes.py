@@ -1,5 +1,5 @@
 # app/cadastre_process/routes.py
-
+from .workflows.group_2_workflow import get_penalty_notification_doc
 import math
 import os
 from datetime import datetime, timedelta
@@ -20,7 +20,7 @@ from .services.file_service import (
 )
 from .services.processing_service import process_cadastre_data
 from .workflows.group_1_workflow import generate_unilateral_act
-
+from .workflows.group_5_workflow import get_increase_penalty_doc
 UPLOAD_FOLDER = 'uploads'
 if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
@@ -65,6 +65,40 @@ def _sort_checkerboard_data(data):
     return final_sorted_data
 
 
+@cadastre_bp.route('/download-increase-penalty-doc/<int:deal_id>')
+def download_increase_penalty_doc(deal_id):
+    result = get_increase_penalty_doc(deal_id)
+    if result is None:
+        flash('Не удалось сгенерировать документ. Данные о штрафе не найдены.', 'danger')
+        return redirect(url_for('cadastre_process.deals_list'))
+
+    doc_buffer, property_id = result
+    return send_file(
+        doc_buffer, as_attachment=True,
+        download_name=f'Уведомление_о_штрафе_ДС_кв_{property_id}.docx',
+        mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    )
+
+
+# --- НОВЫЙ РОУТ ДЛЯ ЗАГРУЗКИ ДС (ГРУППА 5) ---
+@cadastre_bp.route('/upload-increase-agreement/<int:deal_id>', methods=['POST'])
+def upload_increase_agreement(deal_id):
+    if 'scan' not in request.files:
+        flash('Файл (скан ДС) не найден.', 'danger')
+        return redirect(url_for('cadastre_process.deals_list'))
+
+    file = request.files['scan']
+    if file.filename == '':
+        flash('Файл не выбран.', 'danger')
+        return redirect(url_for('cadastre_process.deals_list'))
+
+    filename = secure_filename(f"increase_agreement_deal_{deal_id}.pdf")
+    filepath = os.path.join(UPLOAD_FOLDER, filename)
+    file.save(filepath)
+
+    update_deal_status(deal_id, 'mark_increase_agreement_signed', data={'filepath': filepath})
+    flash('Скан ДС успешно загружен. Запущен 30-дневный таймер оплаты.', 'success')
+    return redirect(url_for('cadastre_process.deals_list'))
 @cadastre_bp.route('/', methods=['GET'])
 def upload_page():
     houses_data = get_complexes_and_houses()
@@ -339,6 +373,21 @@ def upload_unilateral_act(deal_id):
     flash('Скан одностороннего акта успешно загружен.', 'success')
     return redirect(url_for('cadastre_process.deals_list'))
 
+
+@cadastre_bp.route('/download-penalty-notification/<int:deal_id>')
+def download_penalty_notification(deal_id):
+    result = get_penalty_notification_doc(deal_id)
+    if result is None:
+        flash('Не удалось сгенерировать документ. Данные о пене не найдены.', 'danger')
+        return redirect(url_for('cadastre_process.deals_list'))
+
+    doc_buffer, property_id = result
+
+    return send_file(
+        doc_buffer, as_attachment=True,
+        download_name=f'Уведомление_о_пене_кв_{property_id}.docx',
+        mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    )
 
 @cadastre_bp.route('/download-acceptance-act/<int:deal_id>')
 def download_acceptance_act(deal_id):

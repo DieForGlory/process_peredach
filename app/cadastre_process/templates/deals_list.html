@@ -49,6 +49,7 @@
                     <td><span class="badge bg-info text-dark">{{ group_names[deal.group_key] }}</span></td>
                     <td>
                         {% if status %}
+                             {# --- СЦЕНАРИЙ ДЛЯ ГРУППЫ 1 (БЕЗ ДОЛГА) --- #}
                              {% if status.group_key == '1_no_issues' %}
                                 {% if status.status == 'completed' %}
                                     <span class="badge bg-success">Процесс завершен</span>
@@ -90,7 +91,6 @@
                                     {% if status.unilateral_act_downloaded_at is none %}
                                         <div class="p-2 border rounded bg-light-warning">
                                             <p class="mb-1 small">Клиент отказался подписывать акт и не имеет претензий.</p>
-                                            {# ДОБАВЛЕН КЛАСС download-unilateral-act-btn #}
                                             <a href="{{ url_for('cadastre_process.download_unilateral_act', deal_id=deal.deal_id) }}" class="btn btn-sm btn-warning download-unilateral-act-btn">Скачать односторонний акт</a>
                                         </div>
                                     {% else %}
@@ -99,21 +99,188 @@
                                             <button type="submit" class="btn btn-sm btn-secondary ms-2 flex-shrink-0">Загрузить скан</button>
                                         </form>
                                     {% endif %}
+                                {% endif %}
+
+                             {# --- СЦЕНАРИЙ ДЛЯ ГРУППЫ 2 (С ДОЛГОМ) --- #}
+                             {% elif status.group_key == '2_debt_only' %}
+
+                                {% if status.status == 'completed' %}
+                                    <span class="badge bg-success">Процесс завершен</span>
+
+                                {% elif status.status == 'processing' %}
+                                    <div class="form-check form-switch">
+                                        <input class="form-check-input delivery-checkbox" type="checkbox" data-deal-id="{{ deal.deal_id }}">
+                                        <label>Документы доставлены</label>
+                                    </div>
+
+                                {% elif status.status == 'pending_debt_payment' %}
+                                    <div class="p-2 border rounded bg-light-warning">
+                                        <p class="mb-0 small fw-bold text-warning-dark">Ожидание погашения задолженности</p>
+                                        <p class="mb-0 small">Идет проверка (каждые 3 часа). Если долг будет погашен, начнется 30-дневный таймер.</p>
+                                    </div>
+
+                                {% elif status.status == 'penalty_accrual' %}
+                                    <div class="p-2 border rounded bg-light-danger">
+                                        <p class="mb-1 small fw-bold text-danger">Идет начисление пени.</p>
+                                        <p class="mb-0 small">Ожидание погашения (2-дневный таймер).</p>
+                                        {% if status.penalty_notification_generated %}
+                                            <a href="{{ url_for('cadastre_process.download_penalty_notification', deal_id=deal.deal_id) }}" class="btn btn-sm btn-danger mt-2">
+                                                Скачать уведомление о пене
+                                            </a>
+                                        {% endif %}
+                                    </div>
+
+                                {% elif status.status == 'termination_pending' %}
+                                    <span class="badge bg-danger">Инициировано расторжение</span>
+                                    <p class="small text-muted mb-0">Причина: Непогашение долга.</p>
+
+                                {% elif status.status == 'pending_arrival' %}
+                                    <p class="small text-success fw-bold">Долг погашен!</p>
+                                    {# Копипаста логики из Группы 1 (30-дневный таймер) #}
+                                    {% if deal.is_timed_out %}
+                                        <div class="p-2 border rounded bg-light">
+                                             <p class="mb-1">Клиент не явился в 30-дневный срок.</p>
+                                             <a href="{{ url_for('cadastre_process.download_unilateral_act', deal_id=deal.deal_id) }}" class="btn btn-sm btn-warning">Скачать односторонний акт</a>
+                                        </div>
+                                    {% else %}
+                                        <div class="form-check form-switch">
+                                            <input class="form-check-input client-arrived-checkbox" type="checkbox" data-deal-id="{{ deal.deal_id }}">
+                                            <label>Клиент пришел в офис</label>
+                                        </div>
+                                    {% endif %}
+
+                                {% elif status.status == 'acceptance_pending' %}
+                                    {# Копипаста логики из Группы 1 (Модальное окно) #}
+                                    <button class="btn btn-sm btn-primary open-acceptance-modal"
+                                            data-bs-toggle="modal"
+                                            data-bs-target="#acceptanceModal"
+                                            data-deal-id="{{ deal.deal_id }}">
+                                        Внести результат приемки
+                                    </button>
+
+                                {% elif status.status == 'unilateral_pending' %}
+                                     {# Копипаста логики из Группы 1 (Односторонний акт) #}
+                                     {% if status.unilateral_act_downloaded_at is none %}
+                                        <div class="p-2 border rounded bg-light-warning">
+                                            <p class="mb-1 small">Клиент отказался подписывать акт и не имеет претензий.</p>
+                                            <a href="{{ url_for('cadastre_process.download_unilateral_act', deal_id=deal.deal_id) }}" class="btn btn-sm btn-warning download-unilateral-act-btn">Скачать односторонний акт</a>
+                                        </div>
+                                    {% else %}
+                                        <form method="post" enctype="multipart/form-data" action="{{ url_for('cadastre_process.upload_unilateral_act', deal_id=deal.deal_id) }}" class="d-flex align-items-center">
+                                            <input type="file" name="scan" class="form-control form-control-sm" required>
+                                            <button type="submit" class="btn btn-sm btn-secondary ms-2 flex-shrink-0">Загрузить скан</button>
+                                        </form>
+                                    {% endif %}
+                                {% endif %}
+
+                             {# --- СЦЕНАРИЙ ДЛЯ ГРУПП 3 и 5 (УВЕЛИЧЕНИЕ ПЛОЩАДИ) --- #}
+                             {% elif status.group_key == '3_debt_and_increase' or status.group_key == '5_increase_only' %}
+
+                                {% if status.status == 'completed' %}
+                                    <span class="badge bg-success">Процесс завершен</span>
+
+                                {% elif status.status == 'processing' %}
+                                    <div class="form-check form-switch">
+                                        <input class="form-check-input delivery-checkbox" type="checkbox" data-deal-id="{{ deal.deal_id }}">
+                                        <label>Документы доставлены</label>
+                                    </div>
+
+                                {% elif status.status == 'pending_increase_signing' %}
+                                    <div class="p-2 border rounded bg-light-warning">
+                                        <p class="mb-1 small fw-bold">Ожидание подписания Доп. соглашения (ДС).</p>
+                                        <p class="mb-0 small">Сумма доплаты: <strong>{{ "%.2f"|format(status.area_increase_payment_amount or 0) }} у.е.</strong></p>
+                                        <hr class="my-2">
+                                        <form method="post" enctype="multipart/form-data" action="{{ url_for('cadastre_process.upload_increase_agreement', deal_id=deal.deal_id) }}" class="d-flex align-items-center">
+                                            <input type="file" name="scan" class="form-control form-control-sm" required>
+                                            <button type="submit" class="btn btn-sm btn-primary ms-2 flex-shrink-0">Загрузить скан ДС</button>
+                                        </form>
+                                    </div>
+
+                                {% elif status.status == 'pending_increase_payment' %}
+                                    <div class="p-2 border rounded bg-light-info">
+                                        <p class="mb-1 small fw-bold text-info-dark">ДС подписано. Ожидание оплаты доплаты.</p>
+                                        <p class="mb-0 small">Сумма к оплате: <strong>{{ "%.2f"|format(status.area_increase_payment_amount or 0) }} у.е.</strong></p>
+                                        <p class="mb-0 small">Скан ДС: <a href="#">{{ status.area_increase_scan_path.split('/')[-1] if status.area_increase_scan_path else 'Файл' }}</a></p>
+                                    </div>
+
+                                {% elif status.status == 'pending_increase_penalty' %}
+                                    <div class="p-2 border rounded bg-light-danger">
+                                        <p class="mb-1 small fw-bold text-danger">Клиент не подписал ДС. Начислен штраф.</p>
+                                        <p class="mb-0 small">Сумма штрафа к оплате: <strong>{{ "%.2f"|format(status.area_increase_penalty_amount or 0) }} у.е.</strong></p>
+                                        {% if status.area_increase_penalty_doc_generated %}
+                                            <a href="{{ url_for('cadastre_process.download_increase_penalty_doc', deal_id=deal.deal_id) }}" class="btn btn-sm btn-danger mt-2">
+                                                Скачать уведомление о штрафе
+                                            </a>
+                                        {% endif %}
+                                    </div>
+
+                                {% elif status.status == 'termination_pending' %}
+                                    <span class="badge bg-danger">Инициировано расторжение</span>
+                                    <p class="small text-muted mb-0">Причина: Неуплата по ДС / штрафу.</p>
+
+                                {% elif status.status == 'pending_arrival' %}
+                                    <p class="small text-success fw-bold">Доплата по ДС (или штраф) погашена!</p>
+                                    {# Копипаста логики из Группы 1 (30-дневный таймер) #}
+                                    {% if deal.is_timed_out %}
+                                        <div class="p-2 border rounded bg-light">
+                                             <p class="mb-1">Клиент не явился в 30-дневный срок.</p>
+                                             <a href="{{ url_for('cadastre_process.download_unilateral_act', deal_id=deal.deal_id) }}" class="btn btn-sm btn-warning">Скачать односторонний акт</a>
+                                        </div>
+                                    {% else %}
+                                        <div class="form-check form-switch">
+                                            <input class="form-check-input client-arrived-checkbox" type="checkbox" data-deal-id="{{ deal.deal_id }}">
+                                            <label>Клиент пришел в офис</label>
+                                        </div>
+                                    {% endif %}
+
+                                {% elif status.status == 'acceptance_pending' or status.status == 'unilateral_pending' %}
+                                    {# Этот блок нужен, если клиент пришел в офис (mark_arrived), минуя логику ДС #}
+                                    <p class="small text-muted">Клиент пришел в офис (статус: {{ status.status }}). Выполните действия из Группы 1.</p>
+                                    <button class="btn btn-sm btn-primary open-acceptance-modal"
+                                            data-bs-toggle="modal"
+                                            data-bs-target="#acceptanceModal"
+                                            data-deal-id="{{ deal.deal_id }}">
+                                        Внести результат приемки
+                                    </button>
 
                                 {% endif %}
-                            {% else %}
+
+                             {# --- СЦЕНАРИЙ ДЛЯ ОСТАЛЬНЫХ ГРУПП (ПО УМОЛЧАНИЮ) --- #}
+                             {% else %}
                                 <div class="form-check form-switch">
                                     <input class="form-check-input delivery-checkbox" type="checkbox" data-deal-id="{{ deal.deal_id }}" {% if status.documents_delivered_at %}checked disabled{% endif %}>
                                     <label>Документы доставлены</label>
                                 </div>
-                            {% endif %}
+                             {% endif %}
                         {% else %}
                             <span class="text-muted">Ожидание обработки...</span>
                         {% endif %}
                     </td>
                     <td class="text-center timer-cell">
+                        {# 30-дневный таймер (Группа 1 / После оплаты) #}
                         {% if status and status.status == 'pending_arrival' and not deal.is_timed_out and deal.deadline_iso %}
                            <span class="countdown-timer fw-bold" data-deadline="{{ deal.deadline_iso }}">...</span>
+
+                        {# 10-дневный таймер (Группа 2, долг) #}
+                        {% elif status and status.status == 'pending_debt_payment' and status.debt_payment_deadline %}
+                           <span class="countdown-timer fw-bold text-warning" data-deadline="{{ status.debt_payment_deadline.isoformat() }}">...</span>
+
+                        {# 2-дневный таймер (Группа 2, пеня) #}
+                        {% elif status and status.status == 'penalty_accrual' and status.penalty_check_deadline %}
+                           <span class="countdown-timer fw-bold text-danger" data-deadline="{{ status.penalty_check_deadline.isoformat() }}">...</span>
+
+                        {# 10-дневный таймер (Группа 5, подписание ДС) #}
+                        {% elif status and status.status == 'pending_increase_signing' and status.area_increase_agreement_deadline %}
+                           <span class="countdown-timer fw-bold text-warning" data-deadline="{{ status.area_increase_agreement_deadline.isoformat() }}">...</span>
+
+                        {# 30-дневный таймер (Группа 5, оплата ДС) #}
+                        {% elif status and status.status == 'pending_increase_payment' and status.area_increase_payment_deadline %}
+                           <span class="countdown-timer fw-bold text-info" data-deadline="{{ status.area_increase_payment_deadline.isoformat() }}">...</span>
+
+                        {# 15-дневный таймер (Группа 5, оплата Штрафа) #}
+                        {% elif status and status.status == 'pending_increase_penalty' and status.area_increase_penalty_deadline %}
+                           <span class="countdown-timer fw-bold text-danger" data-deadline="{{ status.area_increase_penalty_deadline.isoformat() }}">...</span>
+
                         {% else %}
                             <span class="text-muted">--</span>
                         {% endif %}
@@ -176,7 +343,6 @@
                     </div>
                     <div class="mb-3">
                         <label for="defect_list" class="form-label">4. Загрузите скан дефектного листа</label>
-                        {# ДОБАВЛЕН АТРИБУТ disabled #}
                         <input class="form-control" type="file" id="defect_list" name="defect_list" disabled>
                         <div class="form-text" id="defect-list-help">Это поле станет активным после загрузки акта.</div>
                     </div>
