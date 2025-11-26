@@ -30,10 +30,10 @@ def get_apartments_for_house(house_id: int):
     db_session = MysqlSession()
     try:
         query = text("""
-            SELECT es.geo_flatnum FROM estate_sells es
+            SELECT es.geo_flatnum_postoffice FROM estate_sells es
             WHERE es.house_id = :h_id 
               AND es.estate_sell_category = 'flat'
-            ORDER BY CAST(es.geo_flatnum AS UNSIGNED);
+            ORDER BY CAST(es.geo_flatnum_postoffice AS UNSIGNED);
         """)
         return db_session.execute(query, {'h_id': house_id}).fetchall()
     finally:
@@ -46,7 +46,7 @@ def get_deals_data(db_session, property_ids: list, house_id: int):
     """
     query = text("""
         SELECT
-            es.geo_flatnum,
+            es.geo_flatnum_postoffice,
             es.estate_floor,
             es.geo_house_entrance,
             es.estate_sell_status_name,
@@ -69,7 +69,7 @@ def get_deals_data(db_session, property_ids: list, house_id: int):
         LEFT JOIN estate_deals d ON es.id = d.estate_sell_id AND d.deal_status_name IN ('Сделка в работе', 'Сделка проведена')
         LEFT JOIN estate_deals_contacts edc ON d.contacts_buy_id = edc.id
         WHERE es.house_id = :h_id
-          AND es.geo_flatnum IN :p_ids
+          AND es.geo_flatnum_postoffice IN :p_ids
           AND es.estate_sell_category = 'flat';
     """)
     result = db_session.execute(query, {'p_ids': property_ids, 'h_id': house_id}).fetchall()
@@ -154,7 +154,7 @@ def get_filtered_deals(filters: dict, page: int, per_page: int):
 
         offset = (page - 1) * per_page
         data_query_str = f"""
-            SELECT d.id as deal_id, d.deal_status_name, es.geo_flatnum, 
+            SELECT d.id as deal_id, d.deal_status_name, es.geo_flatnum_postoffice, 
                    h.complex_name, h.name as house_name, d.finances_income_reserved,
                    edc.contacts_buy_name, edc.contacts_buy_phones,
                    d.deal_sum, p.first_overdue_payment_date
@@ -194,7 +194,7 @@ def get_single_deal_details(deal_id: int):
     db_session_mysql = MysqlSession()
     try:
         query = text("""
-            SELECT d.id as deal_id, es.geo_flatnum as property_id, edc.contacts_buy_name as client_name
+            SELECT d.id as deal_id, es.geo_flatnum_postoffice as property_id, edc.contacts_buy_name as client_name
             FROM estate_deals d
             JOIN estate_sells es ON d.estate_sell_id = es.id
             LEFT JOIN estate_deals_contacts edc ON d.contacts_buy_id = edc.id
@@ -217,7 +217,7 @@ def get_single_deal_details_for_workflow(deal_id: int):
         query = text("""
             SELECT 
                 d.id as deal_id, 
-                es.geo_flatnum as property_id, 
+                es.geo_flatnum_postoffice as property_id, 
                 edc.contacts_buy_name as client_name,
                 d.deal_sum,
                 p.first_overdue_payment_date
