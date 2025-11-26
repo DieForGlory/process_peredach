@@ -14,7 +14,7 @@ def generate_apartment_template(house_id: int):
     if not apartments_result:
         return None
 
-    apartments = [row.geo_flatnum for row in apartments_result]
+    apartments = [row.geo_flatnum_postoffice for row in apartments_result]
     df = pd.DataFrame({'Номер квартиры': apartments, 'КадастроваяПлощадь': ''})
 
     output = io.BytesIO()

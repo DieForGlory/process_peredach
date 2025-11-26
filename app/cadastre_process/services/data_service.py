@@ -78,7 +78,7 @@ def get_deals_data(db_session, property_ids: list, house_id: int):
     for row in result:
         contract_area = row.deal_area if row.deal_area is not None else row.estate_area
 
-        properties_data[str(row.geo_flatnum)] = {
+        properties_data[str(row.geo_flatnum_postoffice)] = {
             'deal_id': row.deal_id,
             'deal_sum': row.deal_sum or 0,  # <-- ДОБАВЛЕНО ПОЛЕ
             'contract_area': contract_area or 0,
