@@ -6,8 +6,47 @@ import docx
 import zipfile
 import re
 from .data_service import get_apartments_for_house
+from docxtpl import DocxTemplate
+import os
+from datetime import datetime, timedelta
+from flask import current_app
+from app import db
+from ..models import DealStatus
+
+def get_russian_month(month_num):
+    months = [
+        'января', 'февраля', 'марта', 'апреля', 'мая', 'июня',
+        'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'
+    ]
+    return months[month_num - 1]
 
 
+def _get_or_create_notification_data(deal_id):
+    """
+    Генерирует или возвращает существующий номер уведомления и дату.
+    Гарантирует, что номер не изменится при повторном скачивании.
+    """
+    status = DealStatus.query.get(deal_id)
+    if not status:
+        return None, None
+
+    # Если номер уже есть, возвращаем его
+    if status.notification_number:
+        return status.notification_number, status.notification_date
+
+    # Если номера нет, генерируем новый
+    # Простой способ генерации уникального номера: Берем максимальный существующий + 1
+    max_num = db.session.query(db.func.max(DealStatus.notification_number)).scalar() or 1000  # Стартуем с 1000
+    new_num = max_num + 1
+
+    # Дата - завтрашний день
+    next_day = datetime.now().date() + timedelta(days=1)
+
+    status.notification_number = new_num
+    status.notification_date = next_day
+    db.session.commit()
+
+    return new_num, next_day
 def generate_apartment_template(house_id: int):
     """Создает Excel-шаблон на основе данных из БД."""
     apartments_result = get_apartments_for_house(house_id)
@@ -143,29 +182,64 @@ def parse_cadastre_excel(file_storage):
         return None
 
 
-def generate_archive_for_group(deals: list, group_key: str):
-    """Создает ZIP-архив с Word-документами."""
-    # Тексты уведомлений
-    notification_texts = {
-        '1_no_issues': "Уважаемый(ая) {client_name}, по вашей квартире №{apartment_id} нет расхождений по площади и отсутствуют задолженности. Приглашаем вас для получения ключей.",
-        '2_debt_only': "Уважаемый(ая) {client_name}, по вашей квартире №{apartment_id} нет расхождений по площади, однако имеется задолженность. Просим вас погасить её перед получением ключей.",
-        # ... добавьте тексты для остальных групп
-    }
-    default_text = "Уведомление для клиента {client_name} по квартире №{apartment_id}."
-    notification_template = notification_texts.get(group_key, default_text)
+# app/cadastre_process/services/file_service.py
 
+def generate_archive_for_group(deals: list, group_key: str):
+    """
+    Создает ZIP-архив с уведомлениями + Excel-отчет для проверки данных.
+    """
     archive_buffer = io.BytesIO()
+
+    # Список для сбора данных отчета
+    report_data = []
+
     with zipfile.ZipFile(archive_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
         for deal in deals:
-            doc = docx.Document()
-            doc.add_paragraph(notification_template.format(
-                client_name=deal.get('client_name', 'Клиент'),
-                apartment_id=deal['property_id']
-            ))
-            doc_buffer = io.BytesIO()
-            doc.save(doc_buffer)
-            doc_buffer.seek(0)
-            zip_file.writestr(f"{deal['property_id']}.docx", doc_buffer.read())
+            # 1. Генерируем сам документ Word
+            doc_buffer = generate_single_document(deal, group_key)
+
+            # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
+            # Используем "or 'Client'", чтобы обработать случай, когда client_name=None
+            client_name_str = deal.get('client_name') or 'Client'
+            safe_name = re.sub(r'[^\w\s-]', '', client_name_str)
+
+            filename = f"{deal['property_id']}_{safe_name}.docx"
+
+            # Записываем Word в архив
+            zip_file.writestr(filename, doc_buffer.read())
+
+            # 2. Собираем данные для отчета
+            report_data.append({
+                'Deal ID': deal.get('deal_id'),
+                'Квартира': deal.get('property_id'),
+                'ФИО Клиента': deal.get('client_name'),
+                'Номер договора': deal.get('agreement_number'),
+                'Дата договора': deal.get('agreement_date'),
+                'Адрес клиента (исходный)': deal.get('client_address'),
+                'Адрес дома (исходный)': deal.get('house_address'),
+                'Полный адрес (сборный)': deal.get('complex_address'),
+                'Разница площади': deal.get('area_diff'),
+                'Сумма доплаты/возврата': deal.get('area_increase_payment_amount') or 0
+            })
+
+        # 3. Генерируем Excel-файл с отчетом
+        if report_data:
+            df = pd.DataFrame(report_data)
+            excel_buffer = io.BytesIO()
+
+            with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
+                df.to_excel(writer, index=False, sheet_name='DataCheck')
+
+                worksheet = writer.sheets['DataCheck']
+                for i, col in enumerate(df.columns):
+                    max_len = max(
+                        df[col].astype(str).map(len).max(),
+                        len(col)
+                    ) + 2
+                    worksheet.set_column(i, i, max_len)
+
+            excel_buffer.seek(0)
+            zip_file.writestr(f"CHECK_REPORT_{group_key}.xlsx", excel_buffer.read())
 
     archive_buffer.seek(0)
     return archive_buffer
@@ -173,26 +247,59 @@ def generate_archive_for_group(deals: list, group_key: str):
 
 def generate_single_document(deal: dict, group_key: str):
     """
-    Создает один Word-документ в памяти для конкретной сделки.
+    Выбирает шаблон в зависимости от группы и генерирует документ.
     """
-    notification_texts = {
-        '1_no_issues': "Уважаемый(ая) {client_name}, по вашей квартире №{apartment_id} нет расхождений по площади и отсутствуют задолженности. Приглашаем вас для получения ключей.",
-        '2_debt_only': "Уважаемый(ая) {client_name}, по вашей квартире №{apartment_id} нет расхождений по площади, однако имеется задолженность. Просим вас погасить её перед получением ключей.",
-        '3_debt_and_increase': "Уважаемый(ая) {client_name}, по вашей квартире №{apartment_id} имеется задолженность и зафиксировано увеличение площади более чем на 2 кв.м. Просим вас обратиться в офис для проведения доплаты и получения ключей.",
-        '4_debt_and_decrease': "Уважаемый(ая) {client_name}, по вашей квартире №{apartment_id} имеется задолженность и зафиксировано уменьшение площади более чем на 2 кв.м. Просим вас обратиться в офис для проведения взаиморасчетов и получения ключей.",
-        '5_increase_only': "Уважаемый(ая) {client_name}, по вашей квартире №{apartment_id} отсутствуют задолженности, но зафиксировано увеличение площади более чем на 2 кв.м. Просим вас обратиться в офис для проведения доплаты и получения ключей.",
-        '6_decrease_only': "Уважаемый(ая) {client_name}, по вашей квартире №{apartment_id} отсутствуют задолженности, но зафиксировано уменьшение площади более чем на 2 кв.м. Просим вас обратиться в офис для проведения взаиморасчетов и получения ключей.",
+    # 1. Получаем строгие данные уведомления
+    notif_id, notif_date = _get_or_create_notification_data(deal['deal_id'])
+
+    if not notif_date:
+        notif_date = datetime.now() + timedelta(days=1)
+
+    agr_date_str = "___________"
+    if deal.get('agreement_date'):
+        agr_date_str = str(deal['agreement_date'])
+
+    # 2. Определяем имя шаблона
+    template_filename = 'readiness_template.docx'
+
+    if group_key in ['3_debt_and_increase', '5_increase_only']:
+        template_filename = 'increase_template.docx'
+    elif group_key in ['4_debt_and_decrease', '6_decrease_only']:
+        template_filename = 'decrease_template.docx'
+
+    # 3. Подготавливаем контекст
+    area_delta = abs(deal.get('area_diff', 0))
+
+    context = {
+        'notification_id': notif_id,
+        'next_day': notif_date.day,
+        'month': get_russian_month(notif_date.month),
+        'year': notif_date.year,
+        'client_fio': deal.get('client_name') or 'ФИО не указано',
+        'client_adress': deal.get('client_address') or 'Адрес не указан',
+        # Для переменной house_adress в шаблоне (старый шаблон готовности) можем оставить просто geo_house или полный
+        'house_adress': deal.get('complex_address') or deal.get('house_address') or 'Адрес дома не найден',
+
+        'agreement_number': deal.get('agreement_number') or 'б/н',
+        'agreement_date': agr_date_str,
+
+        # --- ИСПОЛЬЗУЕМ НОВОЕ ПОЛЕ ДЛЯ ПЕРЕМЕННОЙ В ШАБЛОНЕ ---
+        'complex_address': deal.get('complex_address') or 'Адрес не найден',
+
+        'area_delta': f"{area_delta:.2f}"
     }
-    default_text = "Уведомление для клиента {client_name} по квартире №{apartment_id}."
-    notification_template = notification_texts.get(group_key, default_text)
 
-    doc = docx.Document()
-    doc.add_paragraph(notification_template.format(
-        client_name=deal.get('client_name', 'Клиент'),
-        apartment_id=deal['property_id']
-    ))
+    # 4. Загружаем шаблон
+    template_path = os.path.join(current_app.root_path, 'templates', 'docx', template_filename)
 
-    doc_buffer = io.BytesIO()
-    doc.save(doc_buffer)
-    doc_buffer.seek(0)
-    return doc_buffer
+    try:
+        doc = DocxTemplate(template_path)
+        doc.render(context)
+
+        doc_buffer = io.BytesIO()
+        doc.save(doc_buffer)
+        doc_buffer.seek(0)
+        return doc_buffer
+    except Exception as e:
+        print(f"Ошибка генерации документа ({template_filename}): {e}")
+        return io.BytesIO()

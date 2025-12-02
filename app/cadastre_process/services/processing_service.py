@@ -16,6 +16,27 @@ def process_cadastre_data(cadastre_data: dict, house_id: int):
     db_session_mysql = MysqlSession()
     try:
         properties_from_db = get_deals_data(db_session_mysql, property_ids, house_id)
+
+        # --- НАЧАЛО БЛОКА ОТЛАДКИ (DEBUG) ---
+        print(f"\n====== ДИАГНОСТИКА ДАННЫХ ДЛЯ ДОМА ID {house_id} ======")
+        print(f"Всего найдено записей в БД: {len(properties_from_db)}")
+
+        # Выведем первые 5 записей для проверки
+        debug_counter = 0
+        for flat_num, data in properties_from_db.items():
+            if debug_counter >= 5:
+                break
+
+            agr_num = data.get('agreement_number')
+            agr_date = data.get('agreement_date')
+
+            print(f"Кв. {flat_num}: Deal ID={data.get('deal_id')} | "
+                  f"Договор: '{agr_num}' | Дата: '{agr_date}'")
+
+            debug_counter += 1
+        print("=======================================================\n")
+        # --- КОНЕЦ БЛОКА ОТЛАДКИ ---
+
     finally:
         MysqlSession.remove()
 
@@ -36,7 +57,7 @@ def process_cadastre_data(cadastre_data: dict, house_id: int):
 
         deal_info = {
             'deal_id': prop_data.get('deal_id'),
-            'deal_sum': deal_sum,  # <-- Сохраняем сумму
+            'deal_sum': deal_sum,
             'property_id': prop_id,
             'area_diff': round(area_diff, 2),
             'contract_area': contract_area,
@@ -45,7 +66,14 @@ def process_cadastre_data(cadastre_data: dict, house_id: int):
             'floor': prop_data.get('floor'),
             'section': prop_data.get('section', 'N/A'),
             'sell_status_name': prop_data.get('sell_status_name'),
-            'deal_status_name': prop_data.get('deal_status_name')
+            'deal_status_name': prop_data.get('deal_status_name'),
+            'agreement_number': prop_data.get('agreement_number'),
+            'agreement_date': prop_data.get('agreement_date'),
+            'client_address': prop_data.get('client_address'),
+            'house_address': prop_data.get('house_address'),
+
+            # --- ПРОКИДЫВАЕМ НОВОЕ ПОЛЕ ---
+            'complex_address': prop_data.get('complex_address')
         }
 
         has_debt = prop_data.get('has_debt', False)

@@ -42,7 +42,7 @@ def get_apartments_for_house(house_id: int):
 
 def get_deals_data(db_session, property_ids: list, house_id: int):
     """
-    (Обновлено: добавлен d.deal_sum)
+    Обновлено: добавлены город и улица для формирования полного адреса.
     """
     query = text("""
         SELECT
@@ -55,8 +55,14 @@ def get_deals_data(db_session, property_ids: list, house_id: int):
             d.deal_area,
             d.deal_status_name,
             d.seller_contacts_id,
-            d.deal_sum, -- <-- ДОБАВЛЕНО ПОЛЕ СУММЫ ДОГОВОРА
+            d.deal_sum,
+            d.agreement_number,
+            d.agreement_date,
             edc.contacts_buy_name,
+            edc.passport_address,
+            h.geo_house,
+            h.geo_city_name,   -- НОВОЕ
+            h.geo_street_name, -- НОВОЕ
 
             (SELECT 1 FROM finances p
              WHERE p.deal_id = d.id
@@ -68,6 +74,7 @@ def get_deals_data(db_session, property_ids: list, house_id: int):
         FROM estate_sells es
         LEFT JOIN estate_deals d ON es.id = d.estate_sell_id AND d.deal_status_name IN ('Сделка в работе', 'Сделка проведена')
         LEFT JOIN estate_deals_contacts edc ON d.contacts_buy_id = edc.id
+        LEFT JOIN estate_houses h ON es.house_id = h.id
         WHERE es.house_id = :h_id
           AND es.geo_flatnum_postoffice IN :p_ids
           AND es.estate_sell_category = 'flat';
@@ -78,9 +85,18 @@ def get_deals_data(db_session, property_ids: list, house_id: int):
     for row in result:
         contract_area = row.deal_area if row.deal_area is not None else row.estate_area
 
+        # --- ФОРМИРОВАНИЕ ПОЛНОГО АДРЕСА ---
+        # Собираем части адреса в список, исключая пустые значения (None или пустые строки)
+        address_parts = [
+            part for part in [row.geo_city_name, row.geo_street_name, row.geo_house]
+            if part
+        ]
+        # Склеиваем через запятую
+        full_complex_address = ", ".join(address_parts)
+
         properties_data[str(row.geo_flatnum_postoffice)] = {
             'deal_id': row.deal_id,
-            'deal_sum': row.deal_sum or 0,  # <-- ДОБАВЛЕНО ПОЛЕ
+            'deal_sum': row.deal_sum or 0,
             'contract_area': contract_area or 0,
             'client_id': row.seller_contacts_id,
             'floor': row.estate_floor,
@@ -88,9 +104,17 @@ def get_deals_data(db_session, property_ids: list, house_id: int):
             'has_debt': bool(row.has_debt),
             'client_name': row.contacts_buy_name,
             'deal_status_name': row.deal_status_name,
-            'sell_status_name': row.estate_sell_status_name
+            'sell_status_name': row.estate_sell_status_name,
+            'agreement_number': row.agreement_number,
+            'agreement_date': row.agreement_date,
+            'client_address': row.passport_address,
+            'house_address': row.geo_house,
+
+            # Сохраняем новый полный адрес
+            'complex_address': full_complex_address
         }
     return properties_data
+
 def check_increase_payment(deal_id: int, required_amount: float):
     """
     Проверяет, был ли платеж "Проведено" на сумму доплаты за метры.

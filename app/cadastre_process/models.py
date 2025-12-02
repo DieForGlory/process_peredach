@@ -19,7 +19,8 @@ class DealStatus(db.Model):
     has_defect_list = db.Column(db.Boolean, nullable=True)
     signed_act_uploaded_path = db.Column(db.String(255), nullable=True)
     defect_list_uploaded_path = db.Column(db.String(255), nullable=True)
-
+    notification_number = db.Column(db.Integer, nullable=True)  # Строгий номер уведомления
+    notification_date = db.Column(db.Date, nullable=True)
     # --- Поля для Группы 2 (Долг) ---
     debt_payment_deadline = db.Column(db.DateTime, nullable=True)
     penalty_check_deadline = db.Column(db.DateTime, nullable=True)
