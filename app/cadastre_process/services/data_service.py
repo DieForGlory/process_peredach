@@ -11,16 +11,19 @@ from ..models import DealStatus
 
 
 def get_complexes_and_houses():
-    """Получает список всех ЖК и домов из MySQL для UI фильтров."""
     db_session = MysqlSession()
     houses_data = defaultdict(list)
     try:
+        #
         query = text(
             "SELECT id, complex_name, name FROM estate_houses WHERE complex_name IS NOT NULL AND name IS NOT NULL ORDER BY complex_name, name;")
         result = db_session.execute(query).fetchall()
         for row in result:
             houses_data[row.complex_name].append({'id': row.id, 'name': row.name})
         return houses_data
+    except Exception as e:
+        print(f"!!! CRITICAL DB ERROR in get_complexes_and_houses: {e}")
+        return {} # Возвращаем пустой словарь, чтобы UI не падал, а показывал пустые списки
     finally:
         MysqlSession.remove()
 
@@ -42,8 +45,41 @@ def get_apartments_for_house(house_id: int):
 
 def get_deals_data(db_session, property_ids: list, house_id: int):
     """
-    Обновлено: добавлены город и улица для формирования полного адреса.
+    Модифицированная версия с глубокой диагностикой.
     """
+    print(f"\n--- [DEBUG] START get_deals_data ---")
+    print(f"Input House ID: {house_id} (Type: {type(house_id)})")
+    print(f"Input Property IDs (First 5): {property_ids[:5]}")
+
+    # 1. ПРОВЕРКА: Есть ли вообще записи для этого дома?
+    check_q = text(
+        "SELECT count(*), estate_sell_category FROM estate_sells WHERE house_id = :h_id GROUP BY estate_sell_category")
+    try:
+        check_res = db_session.execute(check_q, {'h_id': house_id}).fetchall()
+        print(f"DB Check for House {house_id}: {check_res}")
+        # Ожидаем что-то вроде [(50, 'flat'), (10, 'parking')]
+
+        if not check_res:
+            print("!!! ВНИМАНИЕ: В таблице estate_sells НЕТ записей с таким house_id.")
+    except Exception as e:
+        print(f"Error checking house existence: {e}")
+
+    # 2. ПРОВЕРКА: Формат номеров квартир
+    sample_q = text(
+        "SELECT geo_flatnum_postoffice FROM estate_sells WHERE house_id = :h_id AND estate_sell_category='flat' LIMIT 5")
+    try:
+        samples = db_session.execute(sample_q, {'h_id': house_id}).fetchall()
+        sample_nums = [row[0] for row in samples]
+        print(f"DB Flat Numbers Sample: {sample_nums}")
+
+        if sample_nums and property_ids:
+            print(f"Format Compare: Excel '{property_ids[0]}' vs DB '{sample_nums[0]}'")
+    except Exception as e:
+        print(f"Error checking samples: {e}")
+
+    print("--- [DEBUG] Executing Main Query ---")
+
+    # Основной запрос (без изменений логики, только text())
     query = text("""
         SELECT
             es.geo_flatnum_postoffice,
@@ -61,17 +97,15 @@ def get_deals_data(db_session, property_ids: list, house_id: int):
             edc.contacts_buy_name,
             edc.passport_address,
             h.geo_house,
-            h.geo_city_name,   -- НОВОЕ
-            h.geo_street_name, -- НОВОЕ
-            es.geo_flatnum,    -- НОВОЕ: Поле для нумерации квартир из БД (по запросу пользователя)
-
+            h.geo_city_name,
+            h.geo_street_name,
+            es.geo_flatnum,
             (SELECT 1 FROM finances p
              WHERE p.deal_id = d.id
                AND p.status_name = 'К оплате'
                AND p.date_to < NOW()
              LIMIT 1
             ) IS NOT NULL AS has_debt
-
         FROM estate_sells es
         LEFT JOIN estate_deals d ON es.id = d.estate_sell_id AND d.deal_status_name IN ('Сделка в работе', 'Сделка проведена')
         LEFT JOIN estate_deals_contacts edc ON d.contacts_buy_id = edc.id
@@ -80,19 +114,16 @@ def get_deals_data(db_session, property_ids: list, house_id: int):
           AND es.geo_flatnum_postoffice IN :p_ids
           AND es.estate_sell_category = 'flat';
     """)
+
     result = db_session.execute(query, {'p_ids': property_ids, 'h_id': house_id}).fetchall()
+    print(f"Main Query Result Count: {len(result)}")
+    print("--- [DEBUG] END get_deals_data ---\n")
 
     properties_data = {}
     for row in result:
+        # Логика маппинга осталась прежней
         contract_area = row.deal_area if row.deal_area is not None else row.estate_area
-
-        # --- ФОРМИРОВАНИЕ ПОЛНОГО АДРЕСА ---
-        # Собираем части адреса в список, исключая пустые значения (None или пустые строки)
-        address_parts = [
-            part for part in [row.geo_city_name, row.geo_street_name, row.geo_house]
-            if part
-        ]
-        # Склеиваем через запятую
+        address_parts = [p for p in [row.geo_city_name, row.geo_street_name, row.geo_house] if p]
         full_complex_address = ", ".join(address_parts)
 
         properties_data[str(row.geo_flatnum_postoffice)] = {
@@ -110,9 +141,7 @@ def get_deals_data(db_session, property_ids: list, house_id: int):
             'agreement_date': row.agreement_date,
             'client_address': row.passport_address,
             'house_address': row.geo_house,
-            'db_flat_num': str(row.geo_flatnum) if row.geo_flatnum is not None else str(row.geo_flatnum_postoffice), # Сохраняем новое поле
-
-            # Сохраняем новый полный адрес
+            'db_flat_num': str(row.geo_flatnum) if row.geo_flatnum is not None else str(row.geo_flatnum_postoffice),
             'complex_address': full_complex_address
         }
     return properties_data
