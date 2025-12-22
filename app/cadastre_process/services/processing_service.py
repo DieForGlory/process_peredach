@@ -73,6 +73,7 @@ def process_cadastre_data(cadastre_data: dict, house_id: int):
             'house_address': prop_data.get('house_address'),
 
             # --- ПРОКИДЫВАЕМ НОВОЕ ПОЛЕ ---
+            'db_flat_num': prop_data.get('db_flat_num'),
             'complex_address': prop_data.get('complex_address')
         }
 

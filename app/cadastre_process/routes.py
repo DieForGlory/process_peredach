@@ -55,6 +55,9 @@ def _sort_checkerboard_data(data):
             apartments = floors_data[floor]
             # 5. Сортируем квартиры
             try:
+                # В сортировке используем property_id, так как в diff_checkerboard и file_checkerboard
+                # он является ключом для сравнения. db_checkerboard использует db_flat_num,
+                # но для сортировки внутри этажа оставим property_id.
                 apartments.sort(key=lambda x: int(x['property_id']))
             except (ValueError, TypeError):
                 apartments.sort(key=lambda x: str(x['property_id']))
@@ -142,7 +145,7 @@ def download_checkerboard():
         section = deal.get('section') or 'N/A'
         floor = deal.get('floor') or 'N/A'
         db_checkerboard[section][floor].append({
-            'property_id': deal['property_id'],
+            'property_id': deal.get('db_flat_num', deal['property_id']),  # Используем db_flat_num для нумерации
             'area': deal.get('contract_area', 0)
         })
 

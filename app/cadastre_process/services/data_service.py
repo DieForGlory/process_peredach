@@ -63,6 +63,7 @@ def get_deals_data(db_session, property_ids: list, house_id: int):
             h.geo_house,
             h.geo_city_name,   -- НОВОЕ
             h.geo_street_name, -- НОВОЕ
+            es.geo_flatnum,    -- НОВОЕ: Поле для нумерации квартир из БД (по запросу пользователя)
 
             (SELECT 1 FROM finances p
              WHERE p.deal_id = d.id
@@ -109,6 +110,7 @@ def get_deals_data(db_session, property_ids: list, house_id: int):
             'agreement_date': row.agreement_date,
             'client_address': row.passport_address,
             'house_address': row.geo_house,
+            'db_flat_num': str(row.geo_flatnum) if row.geo_flatnum is not None else str(row.geo_flatnum_postoffice), # Сохраняем новое поле
 
             # Сохраняем новый полный адрес
             'complex_address': full_complex_address
