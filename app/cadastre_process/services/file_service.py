@@ -154,35 +154,76 @@ def _parse_xonadon_format(df):
 def parse_cadastre_excel(file_storage):
     """
     Определяет формат Excel-файла и разбирает его.
-    Поддерживает стандартный шаблон и новый формат с 'Xonadon'.
+    Теперь поддерживает 3 формата: Стандартный, Xonadon (V1) и HISOBI (V2).
     """
     try:
         # 1. Попытка разбора как стандартный шаблон
         df_template = pd.read_excel(file_storage)
         template_data = _parse_template_format(df_template.copy())
-        if template_data is not None and template_data:
-            print("Обнаружен и успешно обработан стандартный формат шаблона.")
+        if template_data:
+            print("Обнаружен стандартный формат шаблона.")
             return template_data
-        else:
-            print("Стандартный шаблон не распознан или пуст. Переход к следующему формату.")
 
         file_storage.seek(0)
+        # Читаем без заголовков для гибкого анализа структур
+        df_raw = pd.read_excel(file_storage, header=None)
 
-        # 2. Попытка разбора как формат 'Xonadon'
-        df_new = pd.read_excel(file_storage, header=None)
-        new_format_data = _parse_xonadon_format(df_new)
-        if new_format_data is not None:
-            return new_format_data
+        # 2. Попытка разбора как формат 'HISOBI' (ваш новый файл)
+        hisobi_data = _parse_hisobi_format(df_raw.copy())
+        if hisobi_data:
+            return hisobi_data
 
-        print("\n!!! КРИТИЧЕСКАЯ ОШИБКА: Не удалось определить формат файла или извлечь данные.")
+        # 3. Попытка разбора как старый формат 'Xonadon'
+        xonadon_data = _parse_xonadon_format(df_raw.copy())
+        if xonadon_data:
+            return xonadon_data
+
+        print("\n!!! КРИТИЧЕСКАЯ ОШИБКА: Не удалось определить формат файла.")
         return None
 
     except Exception as e:
-        print(f"\n!!! КРИТИЧЕСКАЯ ОШИБКА при чтении Excel файла: {e}")
+        print(f"\n!!! КРИТИЧЕСКАЯ ОШИБКА при чтении файла: {e}")
         return None
 
 
-# app/cadastre_process/services/file_service.py
+def _parse_hisobi_format(df):
+    """
+    Парсер для формата 'HISOBI':
+    - Маркер квартиры (напр. '1-хонадон') в колонке 5 (индекс 5).
+    - Итоговая площадь в строке 'Жами:' (индекс 3) в колонке 9 (индекс 9).
+    """
+    print("\n--- Логирование: Начата обработка формата 'HISOBI' ---")
+    cadastre_data = {}
+    current_apartment = None
+
+    for idx, row in df.iterrows():
+        # 1. Ищем номер квартиры в 6-м столбце (индекс 5)
+        # Ищем паттерны типа "1-хонадон" или "1-xonadon"
+        cell_val = str(row[5]) if pd.notna(row[5]) else ""
+        match = re.search(r'(\d+)-(?:хонадон|xonadon)', cell_val, re.IGNORECASE)
+
+        if match:
+            current_apartment = match.group(1)
+            print(f"Обнаружена квартира: {current_apartment}")
+            continue
+
+        # 2. Если квартира найдена, ищем строку с итогом "Жами:" в 4-м столбце (индекс 3)
+        if current_apartment:
+            row_label = str(row[3]) if pd.notna(row[3]) else ""
+            if "Жами:" in row_label or "Total:" in row_label:
+                area_val = row[9]  # Площадь в 10-м столбце (индекс 9)
+                try:
+                    if pd.notna(area_val):
+                        area = float(str(area_val).replace(',', '.'))
+                        cadastre_data[current_apartment] = area
+                        print(f"УСПЕХ: Для кв {current_apartment} сохранена площадь: {area}")
+                        current_apartment = None  # Сбрасываем для поиска следующей
+                except (ValueError, TypeError) as e:
+                    print(f"!!! ОШИБКА: Не удалось преобразовать площадь '{area_val}' для кв {current_apartment}")
+                    continue
+
+    print(f"ИТОГО: Обработано {len(cadastre_data)} квартир в формате 'HISOBI'.")
+    return cadastre_data if cadastre_data else None
 
 def generate_archive_for_group(deals: list, group_key: str):
     """
